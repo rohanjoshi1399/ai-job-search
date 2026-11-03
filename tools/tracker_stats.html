@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job Search Stats</title>
+<style>
+:root {
+  --bg: #f4f5f7; --card: #ffffff; --ink: #1d2330; --muted: #5d6677; --line: #d5d9e0; --accent: #2f5bd3;
+  --s-applied: #5b6b8c; --s-wait: #c9892b; --s-none: #9aa3b4; --s-rej: #c4554d; --s-iv: #2f5bd3; --s-offer: #1d8a55; --s-acc: #126b40;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171d; --card: #232834; --ink: #e7eaf0; --muted: #9aa3b4; --line: #333a48; --accent: #7aa2ff;
+    --s-applied: #8a9bbd; --s-wait: #e0a54a; --s-none: #6c7586; --s-rej: #e07a72; --s-iv: #7aa2ff; --s-offer: #4cc58a; --s-acc: #7fe0ad;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif; }
+main { max-width: 1080px; margin: 0 auto; padding: 16px 16px 48px; }
+.top { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.top a { color: var(--accent); }
+h1 { font-size: 20px; margin: 4px 0 2px; }
+.sub { color: var(--muted); margin: 0 0 16px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.tile { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.tile .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.tile .k { color: var(--muted); font-size: 12.5px; }
+.panel { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+.panel h2 { font-size: 15px; margin: 0 0 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.actions { display: flex; gap: 6px; flex-wrap: wrap; }
+button { font: inherit; font-size: 12.5px; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+svg { display: block; width: 100%; height: auto; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+pre { background: var(--bg); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; font-size: 12.5px; margin: 10px 0 0; }
+.empty { color: var(--muted); padding: 20px 0; text-align: center; }
+#toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg);
+  padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+#toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<main>
+  <div class="top"><a href="/">&larr; Board</a></div>
+  <h1>Job search stats</h1>
+  <p class="sub" id="sub"></p>
+  <div class="tiles" id="tiles"></div>
+  <section class="panel">
+    <h2><span>Application funnel</span>
+      <span class="actions">
+        <button id="copyMatic" title="Paste into sankeymatic.com to restyle">Copy SankeyMATIC text</button>
+        <button id="dlSvg">Download SVG</button>
+        <button id="dlPng">Download PNG</button>
+      </span></h2>
+    <div id="sankey"></div>
+    <pre id="matic" hidden></pre>
+  </section>
+  <div class="grid2">
+    <section class="panel"><h2><span>Submitted per week</span><span id="goalNote" class="sub" style="margin:0"></span></h2><div id="weekly"></div></section>
+    <section class="panel"><h2><span>By role type</span></h2><div id="types"></div></section>
+  </div>
+  <p class="sub">Counts only: the funnel and the downloads contain no company names, so they are safe to share.</p>
+</main>
+<div id="toast" role="status" aria-live="polite"></div>
+<script>
+const $ = (s) => document.querySelector(s);
+const NS = "http://www.w3.org/2000/svg";
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const COLOR = { "Applied": "--s-applied", "Waiting": "--s-wait", "No response": "--s-none", "Rejected": "--s-rej",
+  "Withdrew": "--s-none", "Interviewed": "--s-iv", "In progress": "--s-iv", "Rejected after interview": "--s-rej",
+  "Withdrew after interview": "--s-none", "Offer": "--s-offer", "Accepted": "--s-acc", "Declined": "--s-none", "Offer pending": "--s-offer" };
+function svgEl(tag, attrs, text) { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); if (text != null) n.textContent = text; return n; }
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2200); }
+
+function tiles(s) {
+  const k = s.kpis, g = s.goal;
+  const items = [[k.submitted, "Applications submitted"], [k.response_rate + "%", "Response rate"], [k.interview_rate + "%", "Interview rate"],
+    [k.offer_rate + "%", "Offer rate"], [k.median_days_to_response == null ? "-" : k.median_days_to_response + "d", "Median days to a response"],
+    [k.active, "Active (waiting or interviewing)"], [k.to_submit, "Drafted, not yet sent"],
+    [g.weekly_submitted ? `${g.this_week}/${g.weekly_submitted}` : g.this_week, g.weekly_submitted ? `This week vs goal (streak ${g.streak})` : "Submitted this week"]];
+  const box = $("#tiles"); box.replaceChildren();
+  for (const [v, label] of items) { const t = document.createElement("div"); t.className = "tile";
+    const a = document.createElement("div"); a.className = "v"; a.textContent = v; const b = document.createElement("div"); b.className = "k"; b.textContent = label;
+    t.append(a, b); box.append(t); }
+}
+
+function sankey(links) {
+  const W = 900, H = 380, NODE_W = 14, PAD = 16, M = { l: 8, r: 190, t: 34, b: 10 };
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, xmlns: NS, role: "img", "aria-label": "Job application funnel", "font-family": "Segoe UI, system-ui, sans-serif" });
+  svg.append(svgEl("rect", { x: 0, y: 0, width: W, height: H, fill: css("--card") }));
+  svg.append(svgEl("text", { x: M.l, y: 20, "font-size": 15, "font-weight": 650, fill: css("--ink") }, "My job search"));
+  if (!links.length) { svg.append(svgEl("text", { x: W / 2, y: H / 2, "text-anchor": "middle", fill: css("--muted"), "font-size": 14 }, "Submit an application to start the funnel")); return svg; }
+  const names = [...new Set(links.flatMap(l => [l.source, l.target]))];
+  const depth = { Applied: 0 }; let changed = true;
+  while (changed) { changed = false; for (const l of links) if (depth[l.source] != null && (depth[l.target] == null || depth[l.target] < depth[l.source] + 1)) { depth[l.target] = depth[l.source] + 1; changed = true; } }
+  const value = (n) => Math.max(links.filter(l => l.target === n).reduce((a, l) => a + l.value, 0), links.filter(l => l.source === n).reduce((a, l) => a + l.value, 0));
+  const cols = Math.max(...Object.values(depth)) + 1;
+  const total = value("Applied");
+  const usable = H - M.t - M.b - PAD * 5;
+  const k = usable / total;
+  const colX = (c) => M.l + (cols === 1 ? 0 : c * ((W - M.l - M.r - NODE_W) / (cols - 1)));
+  const pos = {};
+  for (let c = 0; c < cols; c++) {
+    const inCol = names.filter(n => depth[n] === c).sort((a, b) => (links.some(l => l.source === a) - links.some(l => l.source === b)) || value(b) - value(a));
+    let y = M.t;
+    for (const n of inCol) { pos[n] = { x: colX(c), y, h: Math.max(value(n) * k, 3), outY: y, inY: y }; y += pos[n].h + PAD; }
+  }
+  for (const l of [...links].sort((a, b) => (pos[a.target].y - pos[b.target].y))) {
+    const s = pos[l.source], t = pos[l.target], w = l.value * k;
+    const x0 = s.x + NODE_W, x1 = t.x, mx = (x0 + x1) / 2;
+    const d = `M${x0},${s.outY} C${mx},${s.outY} ${mx},${t.inY} ${x1},${t.inY} L${x1},${t.inY + w} C${mx},${t.inY + w} ${mx},${s.outY + w} ${x0},${s.outY + w} Z`;
+    svg.append(svgEl("path", { d, fill: css(COLOR[l.target] || "--s-applied"), "fill-opacity": 0.32 }, null));
+    s.outY += w; t.inY += w;
+  }
+  for (const n of names) {
+    const p = pos[n];
+    svg.append(svgEl("rect", { x: p.x, y: p.y, width: NODE_W, height: p.h, rx: 2, fill: css(COLOR[n] || "--s-applied") }));
+    const label = svgEl("text", { x: p.x + NODE_W + 8, y: p.y + p.h / 2 + 4, "font-size": 13, fill: css("--ink"),
+      stroke: css("--card"), "stroke-width": 4, "stroke-linejoin": "round", "paint-order": "stroke" });
+    label.append(svgEl("tspan", { "font-weight": 650 }, String(value(n))), svgEl("tspan", {}, "  " + n));
+    svg.append(label);
+  }
+  return svg;
+}
+
+function bars(weekly, goal) {
+  const W = 460, H = 200, M = { l: 26, r: 8, t: 10, b: 26 }, max = Math.max(goal || 0, ...weekly.map(w => w.count), 1);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Applications submitted per week" });
+  const bw = (W - M.l - M.r) / weekly.length;
+  const y = (v) => M.t + (H - M.t - M.b) * (1 - v / max);
+  for (let v = 0; v <= max; v += Math.max(1, Math.ceil(max / 4))) {
+    svg.append(svgEl("line", { x1: M.l, x2: W - M.r, y1: y(v), y2: y(v), stroke: css("--line") }));
+    svg.append(svgEl("text", { x: M.l - 6, y: y(v) + 4, "text-anchor": "end", "font-size": 10, fill: css("--muted") }, String(v)));
+  }
+  weekly.forEach((w, i) => {
+    const x = M.l + i * bw + 3;
+    svg.append(svgEl("rect", { x, y: y(w.count), width: bw - 6, height: y(0) - y(w.count), rx: 3, fill: css("--accent") }));
+    if (i % 2 === 1 || weekly.length < 7) svg.append(svgEl("text", { x: x + (bw - 6) / 2, y: H - 8, "text-anchor": "middle", "font-size": 10, fill: css("--muted") }, w.week.slice(5)));
+  });
+  if (goal) svg.append(svgEl("line", { x1: M.l, x2: W - M.r, y1: y(goal), y2: y(goal), stroke: css("--s-offer"), "stroke-dasharray": "4 3", "stroke-width": 1.5 }));
+  return svg;
+}
+
+function typeBars(rows) {
+  if (!rows.length) { const p = document.createElement("p"); p.className = "empty"; p.textContent = "No submitted applications yet"; return p; }
+  const W = 460, rowH = 28, M = { l: 170, r: 30 }, H = rows.length * rowH + 20, max = Math.max(...rows.map(r => r.submitted));
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Applications by role type" });
+  rows.forEach((r, i) => {
+    const yy = 10 + i * rowH, w = (W - M.l - M.r) * r.submitted / max, wi = (W - M.l - M.r) * r.interviewed / max;
+    svg.append(svgEl("text", { x: M.l - 8, y: yy + 14, "text-anchor": "end", "font-size": 11.5, fill: css("--ink") }, r.type.length > 26 ? r.type.slice(0, 25) + "…" : r.type));
+    svg.append(svgEl("rect", { x: M.l, y: yy + 3, width: w, height: 16, rx: 3, fill: css("--s-applied"), "fill-opacity": 0.45 }));
+    svg.append(svgEl("rect", { x: M.l, y: yy + 3, width: wi, height: 16, rx: 3, fill: css("--s-iv") }));
+    svg.append(svgEl("text", { x: M.l + w + 6, y: yy + 15, "font-size": 11, fill: css("--muted") }, `${r.submitted}${r.interviewed ? " / " + r.interviewed + " interviewed" : ""}`));
+  });
+  return svg;
+}
+
+function download(name, blob) { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
+
+let data;
+async function load() {
+  data = await (await fetch("/api/stats", { cache: "no-store" })).json();
+  $("#sub").textContent = `As of ${data.today}. Response = any reply (rejection, interview or offer); waiting and no-response applications count as no reply.`;
+  tiles(data);
+  $("#sankey").replaceChildren(sankey(data.sankey));
+  $("#matic").textContent = data.sankeymatic || "";
+  $("#weekly").replaceChildren(bars(data.weekly, data.goal.weekly_submitted));
+  $("#goalNote").textContent = data.goal.weekly_submitted ? `dashed line = goal of ${data.goal.weekly_submitted}` : "set a weekly goal on the board";
+  $("#types").replaceChildren(typeBars(data.by_role_type));
+}
+$("#copyMatic").onclick = async () => { const m = $("#matic"); m.hidden = false;
+  try { await navigator.clipboard.writeText(data.sankeymatic); toast("Copied; paste it at sankeymatic.com"); } catch { toast("Select the text below and copy it"); } };
+$("#dlSvg").onclick = () => download("job-search-funnel.svg", new Blob([new XMLSerializer().serializeToString($("#sankey svg"))], { type: "image/svg+xml" }));
+$("#dlPng").onclick = () => {
+  const svg = $("#sankey svg"), xml = new XMLSerializer().serializeToString(svg), img = new Image();
+  img.onload = () => { const c = document.createElement("canvas"); c.width = 1800; c.height = 760; const ctx = c.getContext("2d");
+    ctx.drawImage(img, 0, 0, c.width, c.height); c.toBlob(b => download("job-search-funnel.png", b)); };
+  img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(xml);
+};
+load();
+</script>
+</body>
+</html>

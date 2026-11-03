@@ -17,34 +17,34 @@
     --ok: #6fd39b; --ok-bg: #173325; --chip: #2b3140; --drop: #263559; --shadow: none;
   }
 }
-:root[data-theme="dark"] {
-  --bg: #14171d; --panel: #1b1f27; --card: #232834; --ink: #e7eaf0; --muted: #9aa3b4;
-  --line: #333a48; --accent: #7aa2ff; --warn: #f0b45c; --warn-bg: #3a2c14; --hot: #ff8a7a; --hot-bg: #3d1f1c;
-  --ok: #6fd39b; --ok-bg: #173325; --chip: #2b3140; --drop: #263559; --shadow: none;
-}
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink);
-  font: 14px/1.4 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; }
-header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: center; padding: 16px 20px 8px; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; }
+header { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; padding: 14px 20px 6px; }
 h1 { font-size: 18px; margin: 0; font-weight: 600; }
-.stats { display: flex; gap: 16px; flex-wrap: wrap; color: var(--muted); }
+.stats { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); }
 .stats b { color: var(--ink); font-variant-numeric: tabular-nums; }
-.tools { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-input[type="search"], select, input[type="date"], button {
-  font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
-button { cursor: pointer; }
+.tools { margin-left: auto; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+input, select, textarea, button { font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+button, a.btn { cursor: pointer; }
+a.btn { color: var(--ink); text-decoration: none; border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; background: var(--card); }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.hint { padding: 0 20px 10px; color: var(--muted); font-size: 12.5px; }
+.badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 999px; background: var(--hot); color: #fff; font-size: 11.5px; text-align: center; }
+.badge.zero { background: var(--chip); color: var(--muted); }
+.hint { padding: 0 20px 8px; color: var(--muted); font-size: 12.5px; }
 .board { display: flex; gap: 12px; padding: 4px 20px 24px; overflow-x: auto; align-items: flex-start; }
-.col { flex: 0 0 268px; background: var(--panel); border-radius: 10px; padding: 10px; min-height: 120px;
-  max-height: calc(100vh - 130px); display: flex; flex-direction: column; }
+.col { flex: 0 0 262px; background: var(--panel); border-radius: 10px; padding: 10px; min-height: 110px; max-height: calc(100vh - 128px); display: flex; flex-direction: column; }
+.col.collapsed { flex-basis: 54px; min-height: 0; cursor: pointer; }
+.col.collapsed .sub, .col.collapsed .cards { display: none; }
+.col.collapsed h2 { writing-mode: vertical-rl; transform: rotate(180deg); }
 .col.over { outline: 2px dashed var(--accent); background: var(--drop); }
-.col h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; margin: 2px 4px 2px; display: flex; justify-content: space-between; }
-.col h2 span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.col h2 { font-size: 12.5px; text-transform: uppercase; letter-spacing: .04em; margin: 2px 4px; display: flex; justify-content: space-between; gap: 6px; cursor: pointer; user-select: none; }
+.col h2 span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; }
 .col .sub { color: var(--muted); font-size: 12px; margin: 0 4px 8px; }
 .cards { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; padding: 2px; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; box-shadow: var(--shadow); cursor: grab; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; box-shadow: var(--shadow); cursor: pointer; }
+.card:hover { border-color: var(--accent); }
 .card.ro { cursor: default; }
+.card.ro:hover { border-color: var(--line); }
 .card.dragging { opacity: .45; }
 .co { font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
 .fit { font-size: 11.5px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -55,14 +55,30 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .tag.warn { background: var(--warn-bg); color: var(--warn); }
 .tag.ok { background: var(--ok-bg); color: var(--ok); }
 .links { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12.5px; }
-.links a { color: var(--accent); text-decoration: none; }
-.links a:hover { text-decoration: underline; }
-details.notes { margin-top: 6px; font-size: 12.5px; color: var(--muted); }
-details.notes summary { cursor: pointer; }
-details.notes p { margin: 4px 0 0; white-space: pre-wrap; }
+.links a, aside a { color: var(--accent); text-decoration: none; }
+.links a:hover, aside a:hover { text-decoration: underline; }
 .row2 { display: flex; justify-content: space-between; align-items: center; margin-top: 7px; gap: 6px; }
 .row2 select { font-size: 12px; padding: 2px 4px; }
 .empty { color: var(--muted); font-size: 12.5px; text-align: center; padding: 14px 4px; border: 1px dashed var(--line); border-radius: 8px; }
+aside.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); background: var(--card); border-left: 1px solid var(--line);
+  box-shadow: -8px 0 24px rgba(10, 14, 22, .18); padding: 16px 18px 28px; overflow-y: auto; transform: translateX(105%); transition: transform .18s; z-index: 5; }
+aside.drawer.open { transform: none; }
+aside h3 { margin: 0; font-size: 17px; }
+aside h4 { margin: 18px 0 6px; font-size: 12.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+aside .x { position: absolute; top: 10px; right: 12px; border: none; background: none; font-size: 20px; color: var(--muted); }
+.kv { display: grid; grid-template-columns: 96px 1fr; gap: 3px 10px; font-size: 13px; margin-top: 8px; }
+.kv span:nth-child(odd) { color: var(--muted); }
+.form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.form input[type="text"], .form textarea { flex: 1 1 180px; }
+.list { display: flex; flex-direction: column; gap: 6px; }
+.item { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-size: 13px; display: flex; gap: 8px; justify-content: space-between; align-items: flex-start; }
+.item .when { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.item .acts { display: flex; gap: 4px; flex-shrink: 0; }
+.item .acts button, .item .acts a { font-size: 11.5px; padding: 1px 7px; }
+.timeline { border-left: 2px solid var(--line); margin-left: 4px; padding-left: 12px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.timeline .when { color: var(--muted); font-size: 12px; margin-right: 6px; font-variant-numeric: tabular-nums; }
+.group-title { font-size: 12px; font-weight: 600; margin: 12px 0 4px; }
+.group-title.hot { color: var(--hot); }
 dialog { border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); padding: 18px; width: min(360px, calc(100vw - 32px)); }
 dialog::backdrop { background: rgba(10, 14, 22, .45); }
 dialog h3 { margin: 0 0 4px; font-size: 16px; }
@@ -70,11 +86,10 @@ dialog p { margin: 0 0 12px; color: var(--muted); }
 dialog label { display: block; margin: 10px 0 4px; font-size: 13px; }
 dialog .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg);
-  padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 9; }
 #toast.show { opacity: 1; }
 @media (max-width: 640px) {
-  header, .hint { padding-left: 16px; padding-right: 16px; }
-  .board { padding-left: 16px; padding-right: 16px; }
+  header, .hint, .board { padding-left: 16px; padding-right: 16px; }
   .tools { margin-left: 0; width: 100%; }
   .tools input { flex: 1; }
 }
@@ -85,12 +100,20 @@ dialog .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 1
   <h1>Application Board</h1>
   <div class="stats" id="stats"></div>
   <div class="tools">
-    <input type="search" id="q" placeholder="Filter by company or role" aria-label="Filter">
+    <button id="dueBtn" title="Reminders due">Reminders<span class="badge zero" id="dueBadge">0</span></button>
+    <button id="goalBtn" title="Set a weekly goal"></button>
+    <a class="btn" href="/stats" target="_blank">Stats</a>
+    <select id="sort" aria-label="Sort cards"><option value="deadline">Sort: deadline</option><option value="fit">Sort: fit</option><option value="updated">Sort: last update</option></select>
+    <input type="search" id="q" placeholder="Filter (press /)" aria-label="Filter">
+    <button id="notifBtn" title="Browser notifications for due reminders">Notify</button>
     <button id="reload" title="Re-read the tracker from disk">Reload</button>
   </div>
 </header>
-<div class="hint">Drag a card to another list, or use its "Move to" menu. Each move is saved to job_search_tracker.csv straight away. Use /outcome for interview details and feedback.</div>
+<div class="hint">Click a card for details, notes, reminders and interviews. Drag a card, or use "Move to", to change its status. Every change is saved to job_search_tracker.csv straight away.</div>
 <main class="board" id="board"></main>
+
+<aside class="drawer" id="detail" aria-label="Application details"></aside>
+<aside class="drawer" id="due" aria-label="Reminders"></aside>
 
 <dialog id="dlg">
   <form method="dialog" id="dlgForm">
@@ -116,20 +139,29 @@ const COLUMNS = [
 ];
 const LABEL = { drafted: "To submit", on_hold: "On hold", applied: "Applied", interview: "Interviewing", offer: "Offer received",
   hired: "Hired", rejected: "Rejected", no_response: "No response", withdrawn: "Withdrawn", offer_declined: "Offer declined" };
+const STAGES = { phone_screen: "Phone screen", technical: "Technical interview", case: "Case interview", final: "Final round", other: "Other round" };
 const FILES = [[/^form_pack\.md$/, "Form pack"], [/_Resume_.*\.pdf$/, "Resume"], [/_Cover_Letter_.*\.pdf$/, "Letter"],
-  [/^referral_dms\.md$/, "Referral DMs"], [/^job_posting\.md$/, "Saved posting"]];
-let data = null, dragIdx = null;
+  [/^referral_dms\.md$/, "Referral DMs"], [/^job_posting\.md$/, "Saved posting"], [/^outcome\.md$/, "Outcome"]];
+const CARD_FILES = new Set(["Form pack"]);
+let data = null, dragIdx = null, openKey = null;
 
 const $ = (sel) => document.querySelector(sel);
+const store = { get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+                set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
 function el(tag, cls, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+function btn(text, onclick, cls) { const b = el("button", cls, text); b.type = "button"; b.onclick = onclick; return b; }
 function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2600); }
 function days(from, to) { return Math.round((Date.parse(to) - Date.parse(from)) / 86400000); }
+function addDays(d, n) { const x = new Date(d + "T00:00:00"); x.setDate(x.getDate() + n); return x.toISOString().slice(0, 10); }
 function safeUrl(u) { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.href : null; } catch { return null; } }
 function colOf(status) { return COLUMNS.find(c => c.statuses && c.statuses.includes(status)) || COLUMNS[1]; }
+const keyOf = (r) => r.company + "|" + r.role;
 function lastTouch(r) {
   const ds = [r.date, ...(r.notes.match(/\d{4}-\d{2}-\d{2}/g) || [])].filter(d => d && d <= data.today).sort();
   return ds[ds.length - 1] || r.date;
 }
+function allReminders() { return ["overdue", "today", "upcoming", "later"].flatMap(b => data.due[b].map(i => ({ ...i, bucket: b }))); }
+function remindersFor(r) { return allReminders().filter(i => i.company === r.company && i.role === r.role); }
 
 async function load() {
   const res = await fetch("/api/board", { cache: "no-store" });
@@ -137,6 +169,14 @@ async function load() {
   if (data.error) { toast("Could not read tracker: " + data.error); return; }
   render();
 }
+
+async function post(path, body, okMsg) {
+  const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-Board-Token": TOKEN }, body: JSON.stringify(body) });
+  const out = await res.json();
+  if (!res.ok || out.error) { toast("Not saved: " + (out.error || res.status)); return false; }
+  data = out; render(); if (okMsg) toast(okMsg); return true;
+}
+const rowRef = (r) => ({ idx: r.idx, company: r.company, role: r.role, stem: r.stem });
 
 function deadlineTag(dl) {
   if (!dl || !/^\d{4}-\d{2}-\d{2}$/.test(dl)) return null;
@@ -146,43 +186,46 @@ function deadlineTag(dl) {
   return el("span", "tag", "Closes " + dl);
 }
 
+function fileLinks(r, only) {
+  const out = [];
+  const add = (label, href) => { const a = el("a", null, label); a.href = href; a.target = "_blank"; a.rel = "noopener noreferrer"; out.push(a); };
+  const live = safeUrl(r.source);
+  if (live) add("Posting", live);
+  for (const [re, label] of FILES) {
+    if (only && !only.has(label)) continue;
+    const f = r.files.find(n => re.test(n));
+    if (f && r.stem) add(label, `/${f.endsWith(".md") ? "view" : "files"}/${r.stem}/${encodeURIComponent(f)}`);
+  }
+  if (r.research) add("Research", `/research/${encodeURIComponent(r.research)}`);
+  if (r.stem) for (const f of r.files.filter(n => /^interview_prep_.+\.md$/.test(n)))
+    add("Prep: " + f.slice(15, -3).replace(/_/g, " "), `/view/${r.stem}/${encodeURIComponent(f)}`);
+  return out;
+}
+
 function rowCard(r) {
-  const c = el("article", "card"); c.draggable = true; c.dataset.idx = r.idx;
+  const c = el("article", "card"); c.draggable = true; c.dataset.idx = r.idx; c.tabIndex = 0;
   const co = el("div", "co"); co.append(el("span", null, r.company));
   if (r.fit_rating) co.append(el("span", "fit", "fit " + r.fit_rating));
   c.append(co, el("div", "role", r.role));
   const meta = el("div", "meta");
-  if (["drafted", "on_hold"].includes(r.status)) meta.append(el("span", "tag", "Drafted " + r.date));
+  if (["drafted", "on_hold"].includes(r.status)) { meta.append(el("span", "tag", "Drafted " + r.date)); const t = deadlineTag(r.deadline); if (t) meta.append(t); }
   else meta.append(el("span", "tag", (r.status === "applied" ? "Applied " : "Since ") + r.date));
-  if (["drafted", "on_hold"].includes(r.status)) { const t = deadlineTag(r.deadline); if (t) meta.append(t); }
-  if (["applied", "interview"].includes(r.status)) {
-    const q = days(lastTouch(r), data.today);
-    meta.append(el("span", q >= 10 && r.status === "applied" ? "tag warn" : "tag", q >= 10 && r.status === "applied" ? `${q}d quiet, follow up?` : `${q}d since update`));
-  }
+  if (["applied", "interview"].includes(r.status)) meta.append(el("span", "tag", `${days(lastTouch(r), data.today)}d since update`));
   if (colOf(r.status).statuses.length > 1) meta.append(el("span", r.status === "hired" ? "tag ok" : "tag", LABEL[r.status] || r.status));
+  const due = remindersFor(r).filter(i => i.bucket === "overdue" || i.bucket === "today");
+  if (due.length) meta.append(el("span", "tag warn", `${due.length} reminder${due.length > 1 ? "s" : ""} due`));
+  const nextIv = data.interviews.filter(i => i.company === r.company && i.role === r.role && i.date >= data.today).sort((a, b) => a.date.localeCompare(b.date))[0];
+  if (nextIv) meta.append(el("span", "tag ok", `${STAGES[nextIv.stage] || "Interview"} ${nextIv.date}`));
   c.append(meta);
-  const links = el("div", "links");
-  const live = safeUrl(r.source);
-  if (live) { const a = el("a", null, "Posting"); a.href = live; a.target = "_blank"; a.rel = "noopener noreferrer"; links.append(a); }
-  const fileLink = (f, label) => {
-    const a = el("a", null, label);
-    a.href = `/${f.endsWith(".md") ? "view" : "files"}/${r.stem}/${encodeURIComponent(f)}`; a.target = "_blank"; links.append(a);
-  };
-  for (const [prefix, label] of FILES) {
-    const f = r.files.find(n => prefix.test(n));
-    if (f && r.stem) fileLink(f, label);
-  }
-  if (r.research) { const a = el("a", null, "Research"); a.href = `/research/${encodeURIComponent(r.research)}`; a.target = "_blank"; links.append(a); }
-  if (r.stem) for (const f of r.files.filter(n => /^interview_prep_.+\.md$/.test(n)))
-    fileLink(f, "Prep: " + f.slice(15, -3).replace(/_/g, " "));
-  if (links.childNodes.length) c.append(links);
-  if (r.notes) { const d = el("details", "notes"); d.append(el("summary", null, "Notes"), el("p", null, r.notes)); c.append(d); }
+  const links = el("div", "links"); links.append(...fileLinks(r, CARD_FILES)); if (links.childNodes.length) c.append(links);
   const row2 = el("div", "row2");
   const sel = el("select"); sel.setAttribute("aria-label", "Move " + r.company + " to");
   sel.append(new Option("Move to…", ""));
   for (const col of COLUMNS) if (!col.readOnly) sel.append(new Option(col.title, col.id));
   sel.onchange = () => { if (sel.value) requestMove(r, sel.value, true); sel.value = ""; };
   row2.append(sel); c.append(row2);
+  c.addEventListener("click", e => { if (!e.target.closest("a, select, button")) openDetail(r); });
+  c.addEventListener("keydown", e => { if (e.key === "Enter") openDetail(r); });
   c.addEventListener("dragstart", e => { dragIdx = r.idx; c.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(r.idx)); });
   c.addEventListener("dragend", () => { c.classList.remove("dragging"); dragIdx = null; });
   return c;
@@ -204,23 +247,35 @@ function shortCard(j) {
   return c;
 }
 
+function sorter() {
+  const mode = $("#sort").value;
+  if (mode === "fit") return (a, b) => (Number(b.fit_rating) || 0) - (Number(a.fit_rating) || 0);
+  if (mode === "updated") return (a, b) => lastTouch(b).localeCompare(lastTouch(a));
+  return (a, b) => (a.deadline || "9999").localeCompare(b.deadline || "9999") || (Number(b.fit_rating) || 0) - (Number(a.fit_rating) || 0);
+}
+
 function render() {
   const q = $("#q").value.trim().toLowerCase();
   const hit = (s) => !q || s.toLowerCase().includes(q);
-  const rows = data.rows.filter(r => hit(r.company + " " + r.role));
+  const rows = data.rows.filter(r => hit(r.company + " " + r.role + " " + (r.contact_person || "")));
   const count = (sts) => data.rows.filter(r => sts.includes(r.status)).length;
   const stats = $("#stats"); stats.replaceChildren();
-  for (const [label, sts] of [["Submitted", ["applied", "interview", "offer", "hired", "rejected", "no_response", "offer_declined"]],
-                              ["To submit", ["drafted"]], ["Interviewing", ["interview"]], ["Ranked, not started", null]]) {
-    const s = el("span"); s.append(el("b", null, String(sts ? count(sts) : data.shortlist.length)), " " + label); stats.append(s);
+  for (const [label, n] of [["Submitted", count(["applied", "interview", "offer", "hired", "rejected", "no_response", "offer_declined"])],
+                            ["To submit", count(["drafted"])], ["Interviewing", count(["interview"])], ["Ranked, not started", data.shortlist.length]]) {
+    const s = el("span"); s.append(el("b", null, String(n)), " " + label); stats.append(s);
   }
+  const dueN = data.due.overdue.length + data.due.today.length;
+  const badge = $("#dueBadge"); badge.textContent = String(dueN); badge.className = "badge" + (dueN ? "" : " zero");
+  const g = data.goal;
+  $("#goalBtn").textContent = g.weekly_submitted ? `This week ${g.this_week}/${g.weekly_submitted}${g.streak ? ` · ${g.streak}-week streak` : ""}` : "Set weekly goal";
+  const collapsed = store.get("collapsed", {});
   const board = $("#board"); board.replaceChildren();
   for (const col of COLUMNS) {
-    const sec = el("section", "col"); sec.dataset.col = col.id;
-    const items = col.readOnly ? data.shortlist.filter(j => hit(j.company + " " + j.title))
-      : rows.filter(r => col.statuses.includes(r.status)).sort((a, b) =>
-          (a.deadline || "9999").localeCompare(b.deadline || "9999") || (Number(b.fit_rating) || 0) - (Number(a.fit_rating) || 0));
-    const h = el("h2"); h.append(el("span", null, col.title), el("span", null, String(items.length)));
+    const sec = el("section", "col" + (collapsed[col.id] ? " collapsed" : "")); sec.dataset.col = col.id;
+    const items = col.readOnly ? data.shortlist.filter(j => hit(j.company + " " + j.title)) : rows.filter(r => col.statuses.includes(r.status)).sort(sorter());
+    const h = el("h2"); h.title = "Click to collapse or expand"; h.append(el("span", null, col.title), el("span", null, String(items.length)));
+    h.onclick = () => { const c = store.get("collapsed", {}); c[col.id] = !c[col.id]; store.set("collapsed", c); render(); };
+    if (collapsed[col.id]) sec.onclick = (e) => { if (e.target === sec) h.onclick(); };
     sec.append(h); if (col.sub) sec.append(el("div", "sub", col.sub));
     const list = el("div", "cards");
     if (!items.length) list.append(el("div", "empty", col.readOnly ? "Nothing ranked" : "Drop a card here"));
@@ -229,13 +284,139 @@ function render() {
     if (!col.readOnly) {
       sec.addEventListener("dragover", e => { if (dragIdx != null) { e.preventDefault(); sec.classList.add("over"); } });
       sec.addEventListener("dragleave", e => { if (!sec.contains(e.relatedTarget)) sec.classList.remove("over"); });
-      sec.addEventListener("drop", e => { e.preventDefault(); sec.classList.remove("over");
-        const r = data.rows.find(x => x.idx === dragIdx); if (r) requestMove(r, col.id); });
+      sec.addEventListener("drop", e => { e.preventDefault(); sec.classList.remove("over"); const r = data.rows.find(x => x.idx === dragIdx); if (r) requestMove(r, col.id); });
     }
     board.append(sec);
   }
+  if (openKey) { const r = data.rows.find(x => keyOf(x) === openKey); if (r) openDetail(r, true); }
+  if ($("#due").classList.contains("open")) renderDue();
+  notifyDue();
 }
 
+// ---------------- details drawer
+function reminderItem(i) {
+  const it = el("div", "item");
+  const left = el("div"); left.append(el("div", "when", i.date + (i.time ? " " + i.time : "") + (i.bucket === "overdue" ? " · overdue" : "")), el("div", null, i.text));
+  const acts = el("div", "acts");
+  const cal = el("a", "btn", "Calendar"); cal.href = `/ics/${encodeURIComponent(i.id)}.ics`; cal.title = "Add to calendar (.ics)";
+  acts.append(cal);
+  if (i.custom) acts.append(btn("Done", () => post("/api/reminder", { action: "done", id: i.id }, "Reminder done")));
+  else acts.append(btn("Dismiss", () => post("/api/reminder", { action: "dismiss", id: i.id }, "Dismissed")));
+  it.append(left, acts);
+  return it;
+}
+
+function timeline(r) {
+  const items = [];
+  for (const part of (r.notes || "").split(/;\s*/).filter(Boolean)) {
+    const m = part.match(/(\d{4}-\d{2}-\d{2})/);
+    items.push({ date: m ? m[1] : "", text: part.replace(/\s*\d{4}-\d{2}-\d{2}\s*/, " ").trim() || part });
+  }
+  for (const iv of data.interviews.filter(i => i.company === r.company && i.role === r.role))
+    items.push({ date: iv.date, text: `${STAGES[iv.stage] || "Interview"}${iv.notes ? ": " + iv.notes : ""}` });
+  return items.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+}
+
+function openDetail(r, keepScroll) {
+  openKey = keyOf(r);
+  const d = $("#detail"), scroll = d.scrollTop; d.replaceChildren(); d.classList.add("open");
+  d.append(btn("×", closeDrawers, "x"), el("h3", null, r.company), el("div", "role", r.role));
+  const kv = el("div", "kv");
+  const pairs = [["Status", LABEL[r.status] || r.status], ["Fit", r.fit_rating || "-"], ["Pay", r.pay || "-"],
+                 ["Deadline", r.deadline || "none"], [["drafted", "on_hold"].includes(r.status) ? "Drafted" : "Applied", r.date], ["Sector", r.sector || "-"]];
+  for (const [k, v] of pairs) kv.append(el("span", null, k), el("span", null, v));
+  d.append(kv);
+  const links = el("div", "links"); links.style.marginTop = "10px"; links.append(...fileLinks(r)); d.append(links);
+
+  d.append(el("h4", null, "Contact"));
+  const cf = el("div", "form"); const ci = el("input"); ci.type = "text"; ci.placeholder = "Recruiter or referrer"; ci.value = r.contact_person || "";
+  cf.append(ci, btn("Save", () => post("/api/contact", { ...rowRef(r), contact: ci.value }, "Contact saved"))); d.append(cf);
+
+  d.append(el("h4", null, "Reminders"));
+  const rl = el("div", "list"); const mine = remindersFor(r);
+  if (!mine.length) rl.append(el("div", "when", "None due in the next week."));
+  for (const i of mine) rl.append(reminderItem(i));
+  d.append(rl);
+  const rf = el("div", "form"); rf.style.marginTop = "8px";
+  const rd = el("input"); rd.type = "date"; rd.value = addDays(data.today, 3);
+  const rt = el("input"); rt.type = "text"; rt.placeholder = "Remind me to…";
+  rf.append(rd, rt, btn("Add", () => { if (rt.value.trim()) post("/api/reminder", { action: "add", ...rowRef(r), date: rd.value, text: rt.value }, "Reminder added"); }));
+  d.append(rf);
+  if (r.status === "applied") { const ff = el("div", "form"); ff.style.marginTop = "6px";
+    ff.append(btn("I followed up today", () => post("/api/note", { ...rowRef(r), followed_up: true }, "Follow-up logged; next nudge in 10 days"))); d.append(ff); }
+
+  d.append(el("h4", null, "Interviews"));
+  const il = el("div", "list");
+  const ivs = data.interviews.filter(i => i.company === r.company && i.role === r.role).sort((a, b) => a.date.localeCompare(b.date));
+  if (!ivs.length) il.append(el("div", "when", "No rounds logged yet."));
+  for (const iv of ivs) {
+    const it = el("div", "item"); const left = el("div");
+    left.append(el("div", "when", iv.date + (iv.time ? " " + iv.time : "")), el("div", null, (STAGES[iv.stage] || "Interview") + (iv.notes ? ": " + iv.notes : "")));
+    const acts = el("div", "acts"); acts.append(btn("Remove", () => post("/api/interview", { action: "delete", id: iv.id }, "Interview removed")));
+    it.append(left, acts); il.append(it);
+  }
+  d.append(il);
+  const ivf = el("div", "form"); ivf.style.marginTop = "8px";
+  const idt = el("input"); idt.type = "date"; idt.value = data.today;
+  const itm = el("input"); itm.type = "time"; itm.setAttribute("aria-label", "Time (optional)");
+  const ist = el("select"); for (const [k, v] of Object.entries(STAGES)) ist.append(new Option(v, k));
+  const inote = el("input"); inote.type = "text"; inote.placeholder = "Interviewer, format, notes";
+  ivf.append(idt, itm, ist, inote, btn("Log round", () => post("/api/interview", { ...rowRef(r), date: idt.value, time: itm.value, stage: ist.value, notes: inote.value },
+    "Interview logged; prep reminder set for the day before")));
+  d.append(ivf);
+
+  d.append(el("h4", null, "Timeline"));
+  const nf = el("div", "form"); const nt = el("input"); nt.type = "text"; nt.placeholder = "Add a note (saved with today's date)";
+  nf.append(nt, btn("Add note", () => { if (nt.value.trim()) post("/api/note", { ...rowRef(r), text: nt.value }, "Note added"); })); d.append(nf);
+  const tl = el("div", "timeline"); tl.style.marginTop = "10px";
+  for (const t of timeline(r)) { const line = el("div"); line.append(el("span", "when", t.date || "-"), document.createTextNode(t.text)); tl.append(line); }
+  d.append(tl);
+  if (keepScroll) d.scrollTop = scroll;
+}
+
+function renderDue() {
+  const d = $("#due"); d.replaceChildren(); d.classList.add("open");
+  d.append(btn("×", closeDrawers, "x"), el("h3", null, "Reminders"));
+  const top = el("div", "form"); top.style.marginTop = "8px";
+  const all = el("a", "btn", "Add all upcoming to calendar"); all.href = "/ics/upcoming.ics"; top.append(all); d.append(top);
+  const groups = [["overdue", "Overdue", "hot"], ["today", "Today", "hot"], ["upcoming", "Next 7 days", ""], ["later", "Later", ""]];
+  let any = false;
+  for (const [b, title, cls] of groups) {
+    const items = data.due[b]; if (!items.length) continue; any = true;
+    d.append(el("div", "group-title " + cls, `${title} (${items.length})`));
+    const list = el("div", "list");
+    for (const i of items) {
+      const it = reminderItem({ ...i, bucket: b });
+      if (i.company) { const open = btn("Open", () => { const r = data.rows.find(x => x.company === i.company && x.role === i.role); if (r) { $("#due").classList.remove("open"); openDetail(r); } });
+        it.querySelector(".acts").prepend(open); }
+      list.append(it);
+    }
+    d.append(list);
+  }
+  if (!any) d.append(el("p", "when", "Nothing due. Follow-up nudges appear 10 days after you apply or last follow up."));
+}
+function closeDrawers() { $("#detail").classList.remove("open"); $("#due").classList.remove("open"); openKey = null; }
+
+// ---------------- browser notifications
+function notifyDue() {
+  if (!("Notification" in window) || Notification.permission !== "granted" || !data) return;
+  const sent = store.get("notified", {}); const today = data.today;
+  for (const i of [...data.due.overdue, ...data.due.today]) {
+    const key = today + ":" + i.id; if (sent[key]) continue;
+    try { new Notification("Job search reminder", { body: i.text, tag: i.id }); } catch {}
+    sent[key] = 1;
+  }
+  for (const k of Object.keys(sent)) if (!k.startsWith(today)) delete sent[k];
+  store.set("notified", sent);
+}
+function notifLabel() {
+  const b = $("#notifBtn");
+  if (!("Notification" in window)) { b.hidden = true; return; }
+  b.textContent = Notification.permission === "granted" ? "Notifications on" : "Notify me";
+  b.disabled = Notification.permission === "granted" || Notification.permission === "denied";
+}
+
+// ---------------- move dialog
 function requestMove(r, colId, fromMenu) {
   const col = COLUMNS.find(c => c.id === colId);
   if (col.statuses.includes(r.status) && (!fromMenu || col.statuses.length === 1)) return;
@@ -250,22 +431,34 @@ function requestMove(r, colId, fromMenu) {
   $("#dlgDateWrap").querySelector("label").textContent = submitting ? "Submitted on" : "Date";
   const dlg = $("#dlg");
   dlg.returnValue = "";
-  dlg.onclose = () => { if (dlg.returnValue === "ok") save(r, needsStatus ? ds.value : col.statuses[0], $("#dlgDate").value); };
+  dlg.onclose = () => { if (dlg.returnValue === "ok") post("/api/move", { ...rowRef(r), status: needsStatus ? ds.value : col.statuses[0], date: $("#dlgDate").value || data.today },
+    `${r.company}: ${LABEL[needsStatus ? ds.value : col.statuses[0]]}, saved to the tracker`); };
   dlg.showModal();
 }
 
-async function save(r, status, when) {
-  const res = await fetch("/api/move", { method: "POST",
-    headers: { "Content-Type": "application/json", "X-Board-Token": TOKEN },
-    body: JSON.stringify({ idx: r.idx, company: r.company, role: r.role, status, date: when || data.today }) });
-  const out = await res.json();
-  if (!res.ok || out.error) { toast("Not saved: " + (out.error || res.status)); return; }
-  data = out; render(); toast(`${r.company}: ${LABEL[status] || status}, saved to the tracker`);
-}
-
+// ---------------- wiring
 $("#q").addEventListener("input", () => data && render());
+$("#sort").value = store.get("sort", "deadline");
+$("#sort").addEventListener("change", () => { store.set("sort", $("#sort").value); render(); });
 $("#reload").addEventListener("click", () => load().then(() => toast("Reloaded from disk")));
-load();
+$("#dueBtn").addEventListener("click", () => { $("#detail").classList.remove("open"); openKey = null; renderDue(); });
+$("#goalBtn").addEventListener("click", () => {
+  const v = prompt("Applications to submit per week (0 to turn the goal off):", String(data.goal.weekly_submitted || 5));
+  if (v != null && /^\d+$/.test(v.trim())) post("/api/goal", { weekly_submitted: Number(v) }, "Weekly goal saved");
+});
+$("#notifBtn").addEventListener("click", async () => { try { await Notification.requestPermission(); } catch {} notifLabel(); notifyDue(); });
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") closeDrawers();
+  if (e.key === "/" && !e.target.closest("input, textarea, select")) { e.preventDefault(); $("#q").focus(); }
+});
+notifLabel();
+load().then(() => {
+  // Deep links: #due opens the reminders panel, #card=<company> opens that card's details.
+  const h = decodeURIComponent(location.hash.slice(1));
+  if (h === "due") renderDue();
+  else if (h.startsWith("card=")) { const r = data.rows.find(x => x.company.toLowerCase() === h.slice(5).toLowerCase()); if (r) openDetail(r); }
+});
+setInterval(() => load(), 10 * 60 * 1000);
 </script>
 </body>
 </html>

@@ -322,6 +322,13 @@ The salary tool works with any salary data you provide (union statistics, Glassd
 
 `python tools/tracker_board.py` opens a local drag-and-drop board over `job_search_tracker.csv`: Ranked, not started (from `/rank`), To submit, On hold, Applied, Interviewing, Offer and Closed. Moving a card updates only that row's `status` and adds a dated note (stamping `date` when a draft is first submitted), following `/outcome`'s write rules, and keeps `documents/applications/<stem>/outcome.md` in step. Each card links the posting, the archived files (Markdown rendered by `tools/md_render.py`, saved postings shown without links) and the company research cache. It listens on 127.0.0.1 only and rejects other Host headers, requests without its per-run token, and non-JSON writes.
 
+- **Details panel:** click a card for its fields, contact person, dated notes as a timeline, an "I followed up today" button (writes `/outcome`'s `followed up YYYY-MM-DD` marker), and every archived file.
+- **Interviews:** log a round (date, time, stage, notes). The row moves to `interview` and the matching `outcome.md` checkbox is ticked.
+- **Reminders:** follow-ups after 10 quiet days (stopping after two, as in `/outcome`), deadlines 3 days before and on the day, interview prep the day before and the day of, plus your own. They show in a Due panel, as browser notifications while the board is open, and as `.ics` calendar files. `python tools/remind.py` prints them, and `--toast` shows a Windows notification, for a daily scheduled task.
+- **Stats** (`/stats`): response, interview and offer rates, median days to a first response, submissions per week against a weekly goal, and the application funnel as a Sankey chart. **Copy SankeyMATIC text**, **Download SVG** and **Download PNG** share counts only, never company names.
+
+Notes and contacts are written to the tracker without commas, quotes or line breaks. Reminders, interviews and the goal live in `documents/applications/board_state.json`, which is gitignored with the rest of `documents/applications/`.
+
 This is a second writer to the tracker, which upstream deliberately keeps to `/outcome` ([#332](https://github.com/ai-job-search-dev/ai-job-search/discussions/332)), so it lives in this fork rather than upstream.
 
 ### Starting over

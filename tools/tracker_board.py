@@ -20,6 +20,14 @@ Markdown files in an application folder open rendered at /view/<stem>/<file>
 (saved postings are third-party text, so they render without links), and the
 company research cache opens at /research/<slug> for interview prep.
 
+Reminders, logged interviews and the weekly goal live in
+documents/applications/board_state.json (tools/board_state.py): /api/note,
+/api/contact, /api/interview, /api/reminder and /api/goal write them, /ics/...
+serves calendar files, and /stats shows the funnel people post (Sankey) with
+response and interview rates. Notes and the contact column are the only other
+tracker fields the board writes; note text is stripped of commas, quotes and
+line breaks as /outcome Step 4 requires.
+
 Interview details, feedback and follow-ups still belong to /outcome.
 
 Usage:
@@ -47,9 +55,11 @@ from urllib.parse import unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from md_render import inline, render  # noqa: E402
+import board_state as bs  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 HTML = Path(__file__).with_name("tracker_board.html")
+STATS_HTML = Path(__file__).with_name("tracker_stats.html")
 HEADER = ["date", "company", "sector", "role", "role_type", "channel", "status", "contact_person",
           "fit_rating", "notes", "cv_file", "cover_letter_file", "source", "deadline"]
 STATUSES = {"drafted", "on_hold", "applied", "interview", "offer", "hired",
@@ -98,6 +108,12 @@ def as_record(idx, header, row):
     rec["stem"] = stem
     folder = ROOT / "documents" / "applications" / stem if stem else None
     rec["files"] = sorted(p.name for p in folder.iterdir() if p.is_file()) if folder and folder.is_dir() else []
+    spec = folder / "pack_spec.json" if folder else None
+    if spec and spec.is_file():
+        try:
+            rec["pay"] = json.loads(spec.read_text(encoding="utf-8")).get("pay")
+        except ValueError:
+            rec["pay"] = None
     slug = research_slug(rec["company"])
     rec["research"] = slug if slug and (ROOT / "company_research" / f"{slug}.json").is_file() else None
     return rec
@@ -151,11 +167,21 @@ def shortlist(tracked):
     return out
 
 
-def board(csv_path):
+def records(csv_path):
     header, rows = read_rows(csv_path)
-    recs = [as_record(i, header, r) for i, r in enumerate(rows)]
-    return {"today": date.today().isoformat(), "rows": recs,
-            "shortlist": shortlist((r["company"], r["role"]) for r in recs)}
+    return [as_record(i, header, r) for i, r in enumerate(rows)]
+
+
+def board(csv_path):
+    recs = records(csv_path)
+    st = bs.load(ROOT)
+    today = date.today()
+    return {"today": today.isoformat(), "rows": recs,
+            "shortlist": shortlist((r["company"], r["role"]) for r in recs),
+            "due": bs.due(recs, st, today),
+            "interviews": st["interviews"],
+            "reminders": [r for r in st["reminders"] if not r.get("done")],
+            "goal": bs.stats(recs, st, ROOT, today)["goal"]}
 
 
 PAGE = """<!doctype html>
@@ -270,6 +296,94 @@ def update_outcome(stem, company, role, status, when):
     path.write_text(text, encoding="utf-8")
 
 
+def find_row(rows, payload):
+    idx = payload.get("idx")
+    key = (payload.get("company"), payload.get("role"))
+    if isinstance(idx, int) and 0 <= idx < len(rows) and (rows[idx][1], rows[idx][3]) == key:
+        return idx
+    matches = [i for i, r in enumerate(rows) if (r[1], r[3]) == key]
+    if len(matches) != 1:
+        raise ValueError("row not found; reload the board")
+    return matches[0]
+
+
+def edit_row(csv_path, payload, change):
+    """Apply change(row) to one padded row under the lock and write the tracker atomically."""
+    with LOCK:
+        header, rows = read_rows(csv_path)
+        idx = find_row(rows, payload)
+        row = rows[idx] + [""] * (len(HEADER) - len(rows[idx]))
+        change(row)
+        rows[idx] = row[: max(len(rows[idx]), len(header))]
+        write_rows(csv_path, header, rows)
+        return row
+
+
+def add_note(csv_path, payload):
+    when = payload.get("date") or date.today().isoformat()
+    if not DATE_RE.match(when):
+        raise ValueError("date must be YYYY-MM-DD")
+    entry = f"followed up {when}" if payload.get("followed_up") else f"{bs.clean(payload.get('text', ''), 200)} {when}"
+    if not entry.strip() or entry.strip() == when:
+        raise ValueError("note is empty")
+
+    def change(row):
+        row[9] = f"{row[9]}; {entry}" if row[9] else entry
+    row = edit_row(csv_path, payload, change)
+    stem = stem_of(row)
+    outcome = ROOT / "documents" / "applications" / stem / "outcome.md" if stem else None
+    if outcome and outcome.exists():
+        text = outcome.read_text(encoding="utf-8").rstrip("\n") + f"\n- {when}: {entry.rsplit(' ', 1)[0]} (tracker board).\n"
+        outcome.write_text(text, encoding="utf-8")
+
+
+def set_contact(csv_path, payload):
+    contact = bs.clean(payload.get("contact", ""), 80)
+
+    def change(row):
+        row[7] = contact
+    edit_row(csv_path, payload, change)
+
+
+def log_interview(csv_path, payload):
+    with bs.LOCK:
+        st = bs.load(ROOT)
+        _, label, day = bs.add_interview(st, payload)
+        bs.save(ROOT, st)
+    header, rows = read_rows(csv_path)
+    row = rows[find_row(rows, payload)]
+    if LEGACY.get(row[6], row[6]) in ("drafted", "on_hold", "applied"):
+        move(csv_path, {**payload, "status": "interview", "date": min(day, date.today()).isoformat()})
+    stem = stem_of(row)
+    outcome = ROOT / "documents" / "applications" / stem / "outcome.md" if stem else None
+    if outcome and outcome.exists():
+        text = outcome.read_text(encoding="utf-8")
+        box = f"- [ ] {label}"
+        if box in text:
+            text = text.replace(box, f"- [x] {label} ({day})", 1)
+        text = text.rstrip("\n") + f"\n- {date.today()}: {label} logged for {day} (tracker board).\n"
+        outcome.write_text(text, encoding="utf-8")
+
+
+def change_state(payload, kind):
+    with bs.LOCK:
+        st = bs.load(ROOT)
+        if kind == "reminder":
+            action = payload.get("action")
+            if action == "add":
+                bs.add_reminder(st, payload)
+            else:
+                bs.update_reminder(st, action, payload.get("id"))
+        elif kind == "interview_delete":
+            st["interviews"] = [i for i in st["interviews"] if i["id"] != payload.get("id")]
+        elif kind == "goal":
+            goal = int(payload.get("weekly_submitted", 0))
+            if not 0 <= goal <= 100:
+                raise ValueError("weekly goal must be 0-100")
+            st["goal"]["weekly_submitted"] = goal
+        bs.save(ROOT, st)
+
+
 def move(csv_path, payload):
     status = payload.get("status")
     if status not in STATUSES:
@@ -279,13 +393,7 @@ def move(csv_path, payload):
         raise ValueError("date must be YYYY-MM-DD")
     with LOCK:
         header, rows = read_rows(csv_path)
-        idx = payload.get("idx")
-        key = (payload.get("company"), payload.get("role"))
-        if not (isinstance(idx, int) and 0 <= idx < len(rows) and (rows[idx][1], rows[idx][3]) == key):
-            matches = [i for i, r in enumerate(rows) if (r[1], r[3]) == key]
-            if len(matches) != 1:
-                raise ValueError("row not found; reload the board")
-            idx = matches[0]
+        idx = find_row(rows, payload)
         row = rows[idx] + [""] * (len(HEADER) - len(rows[idx]))
         old = LEGACY.get(row[6], row[6])
         if old == status:
@@ -335,6 +443,27 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, json.dumps(board(self.csv_path)))
             except Exception as exc:
                 return self._send(500, json.dumps({"error": str(exc)}))
+        if path == "/stats":
+            return self._send(200, STATS_HTML.read_text(encoding="utf-8"), "text/html; charset=utf-8")
+        if path == "/api/stats":
+            recs = records(self.csv_path)
+            return self._send(200, json.dumps(bs.stats(recs, bs.load(ROOT), ROOT, date.today())))
+        m = re.match(r"^/ics/([A-Za-z0-9:|_.@ %&'()+,-]+)\.ics$", path)
+        if m:
+            recs, st = records(self.csv_path), bs.load(ROOT)
+            items = bs.all_reminders(recs, st, date.today())
+            rid = unquote(m.group(1))
+            chosen = [i for i in items if i["date"] >= date.today().isoformat()] if rid == "upcoming" else [i for i in items if i["id"] == rid]
+            if chosen:
+                body = bs.ics(chosen).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/calendar; charset=utf-8")
+                self.send_header("Content-Disposition", 'attachment; filename="job-search-reminder.ics"')
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
         m = re.match(r"^/view/([a-z0-9_]+)/([^/]+)$", path)
         if m:
             body = view_markdown(m.group(1), unquote(m.group(2)))
@@ -358,11 +487,21 @@ class Handler(BaseHTTPRequestHandler):
         if (not self._host_ok() or self.headers.get("X-Board-Token") != self.token
                 or self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json"):
             return self._send(403, '{"error": "forbidden"}')
-        if urlparse(self.path).path != "/api/move":
+        routes = {
+            "/api/move": lambda p: move(self.csv_path, p),
+            "/api/note": lambda p: add_note(self.csv_path, p),
+            "/api/contact": lambda p: set_contact(self.csv_path, p),
+            "/api/interview": lambda p: (change_state(p, "interview_delete") if p.get("action") == "delete"
+                                         else log_interview(self.csv_path, p)),
+            "/api/reminder": lambda p: change_state(p, "reminder"),
+            "/api/goal": lambda p: change_state(p, "goal"),
+        }
+        handler = routes.get(urlparse(self.path).path)
+        if handler is None:
             return self._send(404, '{"error": "not found"}')
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            move(self.csv_path, json.loads(self.rfile.read(length) or b"{}"))
+            handler(json.loads(self.rfile.read(length) or b"{}"))
             return self._send(200, json.dumps(board(self.csv_path)))
         except Exception as exc:
             return self._send(400, json.dumps({"error": str(exc)}))
