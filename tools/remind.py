@@ -10,8 +10,9 @@ day before and day of logged interviews. Used three ways:
   python tools/remind.py --toast    a Windows toast when anything is overdue or due today
                                     (built-in WinRT notifications through PowerShell, no extra modules)
 
-Morning notification (register once, from PowerShell in the repo folder):
-  $py = (Get-Command python).Source
+Morning notification (register once, from PowerShell in the repo folder; pythonw
+runs it without a console window):
+  $py = Join-Path (Split-Path (Get-Command python).Source) "pythonw.exe"
   $a = New-ScheduledTaskAction -Execute $py -Argument "tools\\remind.py --toast" -WorkingDirectory (Get-Location)
   $t = New-ScheduledTaskTrigger -Daily -At 8:57am
   Register-ScheduledTask -TaskName "AI Job Search - reminders" -Action $a -Trigger $t `
@@ -72,7 +73,7 @@ def toast(due):
     xml = f'<toast><visual><binding template="ToastGeneric">{texts}<text placement="attribution">Open: python tools/tracker_board.py</text></binding></visual></toast>'
     env = {**os.environ, "REMIND_TOAST_XML": xml, "REMIND_APP_ID": APP_ID}
     subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", TOAST_PS], env=env, check=True,
-                   capture_output=True, text=True)
+                   capture_output=True, text=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     return True
 
 
