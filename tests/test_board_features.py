@@ -17,6 +17,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "tools"))
 sys.path.insert(0, str(REPO / "tests"))
 import board_state as bs  # noqa: E402
+import tracker_board as tb  # noqa: E402
 from test_tracker_board import HEADER, BoardServerTests  # noqa: E402
 
 
@@ -77,6 +78,44 @@ class StateLogicTests(unittest.TestCase):
         self.assertIn("Applied [2] Interviewed", s["sankeymatic"])
         self.assertEqual(s["goal"]["this_week"], 1)
         self.assertGreaterEqual(s["goal"]["streak"], 1)
+
+
+class ShortlistTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.addCleanup(setattr, tb, "ROOT", tb.ROOT)
+        tb.ROOT = root
+        job = {"status": "ranked", "rank_score": 80, "url": "https://jobs.test/x"}
+        seen = {"a": {**job, "company": "Open Co", "title": "ML Engineer", "location": "Seattle"},
+                "b": {**job, "company": "Late Co", "title": "ML Engineer", "gaps": ["TIMING FAIL: starts January"]},
+                "c": {**job, "company": "Far Co", "title": "ML Engineer", "location_verdict": "FAIL"},
+                "d": {**job, "company": "Skipped Co, Inc.", "title": "ML Engineer"},
+                "e": {**job, "company": "Old Co", "title": "ML Engineer", "location": "FAIL"},
+                "f": {**job, "company": "Tracked Co", "title": "ML Engineer", "status": "ranked"}}
+        (root / "job_scraper").mkdir()
+        (root / "job_scraper" / "seen_jobs.json").write_text(json.dumps({"seen": seen}), encoding="utf-8")
+        (root / "documents" / "cv").mkdir(parents=True)
+        (root / "documents" / "cv" / "daily_run.json").write_text(
+            json.dumps({"skip_companies": [{"name": "Skipped Co", "why": "no sponsorship"}, "Nobody", 7]}), encoding="utf-8")
+
+    def test_ruled_out_jobs_are_flagged_and_sorted_last(self):
+        out = {j["company"]: j for j in tb.shortlist([("Tracked Co", "ML Engineer")])}
+        self.assertNotIn("Tracked Co", out)
+        self.assertEqual((out["Open Co"]["excluded"], out["Open Co"]["skipped"], out["Open Co"]["location"]), (None, None, "Seattle"))
+        self.assertEqual(out["Late Co"]["excluded"], "Ruled out: start date")
+        self.assertEqual(out["Far Co"]["excluded"], "Ruled out: location")
+        self.assertEqual(out["Old Co"]["excluded"], "Ruled out: location")
+        self.assertEqual(out["Old Co"]["location"], "")
+        self.assertEqual((out["Skipped Co, Inc."]["excluded"], out["Skipped Co, Inc."]["skipped"]), (None, "no sponsorship"))
+        self.assertEqual(tb.shortlist([])[0]["company"], "Open Co")
+
+    def test_missing_or_broken_skip_list_is_ignored(self):
+        (tb.ROOT / "documents" / "cv" / "daily_run.json").write_text("[1, 2]", encoding="utf-8")
+        self.assertEqual(tb.skip_list(), [])
+        (tb.ROOT / "documents" / "cv" / "daily_run.json").unlink()
+        self.assertEqual(tb.skip_list(), [])
 
 
 class FeatureServerTests(BoardServerTests):

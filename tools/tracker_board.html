@@ -32,8 +32,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .badge.zero { background: var(--chip); color: var(--muted); }
 .hint { padding: 0 20px 8px; color: var(--muted); font-size: 12.5px; }
 .board { display: flex; gap: 12px; padding: 4px 20px 24px; overflow-x: auto; align-items: flex-start; }
-.col { flex: 0 0 262px; background: var(--panel); border-radius: 10px; padding: 10px; min-height: 110px; max-height: calc(100vh - 128px); display: flex; flex-direction: column; }
-.col.collapsed { flex-basis: 54px; min-height: 0; cursor: pointer; }
+.col { flex: 1 0 214px; max-width: 320px; background: var(--panel); border-radius: 10px; padding: 10px; min-height: 110px; max-height: calc(100vh - 128px); display: flex; flex-direction: column; }
+.col.collapsed { flex: 0 0 54px; min-height: 0; cursor: pointer; }
 .col.collapsed .sub, .col.collapsed .cards { display: none; }
 .col.collapsed h2 { writing-mode: vertical-rl; transform: rotate(180deg); }
 .col.over { outline: 2px dashed var(--accent); background: var(--drop); }
@@ -45,6 +45,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .card:hover { border-color: var(--accent); }
 .card.ro { cursor: default; }
 .card.ro:hover { border-color: var(--line); }
+.ruledbtn { width: 100%; margin-top: 2px; font-size: 12.5px; color: var(--muted); background: transparent; border-style: dashed; }
 .card.dragging { opacity: .45; }
 .co { font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
 .fit { font-size: 11.5px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -135,7 +136,8 @@ const COLUMNS = [
   { id: "applied", title: "Applied", sub: "Submitted, waiting", statuses: ["applied"] },
   { id: "interview", title: "Interviewing", statuses: ["interview"] },
   { id: "offer", title: "Offer", statuses: ["offer", "hired"] },
-  { id: "closed", title: "Closed", statuses: ["rejected", "no_response", "withdrawn", "offer_declined"] },
+  { id: "rejected", title: "Rejected", sub: "Turned down, at any stage", statuses: ["rejected"] },
+  { id: "closed", title: "Closed", sub: "No response, withdrawn or declined", statuses: ["no_response", "withdrawn", "offer_declined"] },
 ];
 const LABEL = { drafted: "To submit", on_hold: "On hold", applied: "Applied", interview: "Interviewing", offer: "Offer received",
   hired: "Hired", rejected: "Rejected", no_response: "No response", withdrawn: "Withdrawn", offer_declined: "Offer declined" };
@@ -238,6 +240,7 @@ function shortCard(j) {
   c.append(co, el("div", "role", j.title));
   const meta = el("div", "meta");
   if (j.excluded) { c.style.opacity = ".6"; meta.append(el("span", "tag hot", j.excluded)); }
+  else if (j.skipped) { c.style.opacity = ".6"; meta.append(el("span", "tag hot", "Ruled out: " + j.skipped)); }
   if (j.other_role) meta.append(el("span", "tag warn", "You track another role here"));
   if (j.location) meta.append(el("span", "tag", j.location));
   const t = deadlineTag(j.deadline); if (t) meta.append(t);
@@ -259,9 +262,12 @@ function render() {
   const hit = (s) => !q || s.toLowerCase().includes(q);
   const rows = data.rows.filter(r => hit(r.company + " " + r.role + " " + (r.contact_person || "")));
   const count = (sts) => data.rows.filter(r => sts.includes(r.status)).length;
+  const ruledOut = (j) => Boolean(j.excluded || j.skipped);
+  const showRuled = store.get("showRuledOut", false);
   const stats = $("#stats"); stats.replaceChildren();
   for (const [label, n] of [["Submitted", count(["applied", "interview", "offer", "hired", "rejected", "no_response", "offer_declined"])],
-                            ["To submit", count(["drafted"])], ["Interviewing", count(["interview"])], ["Ranked, not started", data.shortlist.length]]) {
+                            ["To submit", count(["drafted"])], ["Interviewing", count(["interview"])],
+                            ["Ranked, not started", data.shortlist.filter(j => !ruledOut(j)).length]]) {
     const s = el("span"); s.append(el("b", null, String(n)), " " + label); stats.append(s);
   }
   const dueN = data.due.overdue.length + data.due.today.length;
@@ -272,7 +278,9 @@ function render() {
   const board = $("#board"); board.replaceChildren();
   for (const col of COLUMNS) {
     const sec = el("section", "col" + (collapsed[col.id] ? " collapsed" : "")); sec.dataset.col = col.id;
-    const items = col.readOnly ? data.shortlist.filter(j => hit(j.company + " " + j.title)) : rows.filter(r => col.statuses.includes(r.status)).sort(sorter());
+    const ranked = col.readOnly ? data.shortlist.filter(j => hit(j.company + " " + j.title)) : [];
+    const ruledN = ranked.filter(ruledOut).length;
+    const items = col.readOnly ? ranked.filter(j => showRuled || !ruledOut(j)) : rows.filter(r => col.statuses.includes(r.status)).sort(sorter());
     const h = el("h2"); h.title = "Click to collapse or expand"; h.append(el("span", null, col.title), el("span", null, String(items.length)));
     h.onclick = () => { const c = store.get("collapsed", {}); c[col.id] = !c[col.id]; store.set("collapsed", c); render(); };
     if (collapsed[col.id]) sec.onclick = (e) => { if (e.target === sec) h.onclick(); };
@@ -280,6 +288,8 @@ function render() {
     const list = el("div", "cards");
     if (!items.length) list.append(el("div", "empty", col.readOnly ? "Nothing ranked" : "Drop a card here"));
     for (const it of items) list.append(col.readOnly ? shortCard(it) : rowCard(it));
+    if (ruledN) list.append(btn(showRuled ? "Hide ruled out" : `Show ${ruledN} ruled out`,
+      () => { store.set("showRuledOut", !showRuled); render(); }, "ruledbtn"));
     sec.append(list);
     if (!col.readOnly) {
       sec.addEventListener("dragover", e => { if (dragIdx != null) { e.preventDefault(); sec.classList.add("over"); } });

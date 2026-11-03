@@ -138,15 +138,33 @@ def same_company(a, b):
     return bool(a and b) and (a.startswith(b) or b.startswith(a))
 
 
+def skip_list():
+    """Companies ruled out by hand, as (normalized name, why), from the optional
+    skip_companies list in documents/cv/daily_run.json."""
+    try:
+        items = json.loads((ROOT / "documents" / "cv" / "daily_run.json").read_text(encoding="utf-8")).get("skip_companies")
+    except (OSError, ValueError, AttributeError):
+        return []
+    out = []
+    for s in items if isinstance(items, list) else []:
+        name, why = (s, "") if isinstance(s, str) else (s.get("name", ""), s.get("why", "")) if isinstance(s, dict) else ("", "")
+        if norm_company(name):
+            out.append((norm_company(name), str(why)))
+    return out
+
+
 def shortlist(tracked):
     """Ranked jobs with no tracker row. Company names differ between the scraper and the
     tracker ("PlayerZero, Inc." vs "PlayerZero"), so matching is by normalized company
-    prefix plus title overlap; another role at a tracked company stays visible, flagged."""
+    prefix plus title overlap; another role at a tracked company stays visible, flagged.
+    `excluded` marks a job the ranking ruled out; `skipped` carries the reason when the
+    company is on the skip list. The board hides both unless asked."""
     path = ROOT / "job_scraper" / "seen_jobs.json"
     if not path.exists():
         return []
     seen = json.loads(path.read_text(encoding="utf-8")).get("seen", {})
     tracked = [(norm_company(c), title_words(r)) for c, r in tracked]
+    skips = skip_list()
     out = []
     for key, v in seen.items():
         if v.get("status") != "ranked":
@@ -159,11 +177,17 @@ def shortlist(tracked):
         excluded = next((label for flag, label in (("ELIGIBILITY FAIL", "Ruled out: eligibility"),
                                                    ("TIMING FAIL", "Ruled out: start date"))
                          if flag in gaps), None)
+        if not excluded and v.get("location_verdict", v.get("location")) == "FAIL":
+            excluded = "Ruled out: location"
+        if not excluded and v.get("language_gate") == "FAIL":
+            excluded = "Ruled out: language"
+        skipped = next((why or "on the skip list" for name, why in skips if same_company(co, name)), None)
+        location = v.get("location") if v.get("location") not in ("PASS", "FAIL", "FLAG") else ""
         out.append({"key": key, "title": v.get("title", ""), "company": v.get("company", ""),
-                    "location": v.get("location") or "", "url": v.get("url", ""),
+                    "location": location or "", "url": v.get("url", ""),
                     "score": v.get("rank_score"), "deadline": v.get("deadline"),
-                    "excluded": excluded, "other_role": bool(same_co)})
-    out.sort(key=lambda j: (j["excluded"] is not None, -(j["score"] or 0)))
+                    "excluded": excluded, "skipped": skipped, "other_role": bool(same_co)})
+    out.sort(key=lambda j: (bool(j["excluded"] or j["skipped"]), -(j["score"] or 0)))
     return out
 
 
