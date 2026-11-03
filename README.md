@@ -318,6 +318,12 @@ Market-specific *data sources* (a national salary database, local award-rate tab
 
 The salary tool works with any salary data you provide (union statistics, Glassdoor exports, personal research, etc.). See `tools/README_SALARY_TOOL.md` for the expected format and setup. If you don't have salary data, the salary step is simply skipped.
 
+### Tracker board (this fork)
+
+`python tools/tracker_board.py` opens a local drag-and-drop board over `job_search_tracker.csv`: Ranked, not started (from `/rank`), To submit, On hold, Applied, Interviewing, Offer and Closed. Moving a card updates only that row's `status` and adds a dated note (stamping `date` when a draft is first submitted), following `/outcome`'s write rules, and keeps `documents/applications/<stem>/outcome.md` in step. Each card links the posting, the archived files (Markdown rendered by `tools/md_render.py`, saved postings shown without links) and the company research cache. It listens on 127.0.0.1 only and rejects other Host headers, requests without its per-run token, and non-JSON writes.
+
+This is a second writer to the tracker, which upstream deliberately keeps to `/outcome` ([#332](https://github.com/ai-job-search-dev/ai-job-search/discussions/332)), so it lives in this fork rather than upstream.
+
 ### Starting over
 
 To wipe your profile data and start fresh:
