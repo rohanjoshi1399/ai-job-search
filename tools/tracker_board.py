@@ -3,18 +3,33 @@
 
 Serves a kanban page on 127.0.0.1 that reads the tracker on every load and
 writes status moves straight back to it, so the CSV stays the single source
-of truth that /rank, /scrape, /outcome and /html-report already read. A
-read-only "Ranked, not started" column lists ranked jobs from
-job_scraper/seen_jobs.json that have no tracker row yet.
+of truth that /rank, /scrape, /outcome and /html-report already read. The
+"Ranked, not started" column lists ranked jobs from job_scraper/seen_jobs.json
+that have no tracker row yet, with /rank's stored strengths and gaps; a job
+can be queued for the next unattended run, marked not interested, or copied as
+an /apply command.
 
-A move follows /outcome's write rules:
+A move follows /outcome's write rules (Steps 3 and 4):
   - only `status`, `notes` and (when a draft is first submitted) `date` change;
     every other field of the row is preserved, and no other row is touched
   - the appended note is dated and contains no commas
   - moving a row off `drafted` stamps `date` with the submission date
-  - `documents/applications/<stem>/outcome.md` gets a dated note, is created as
-    an in_progress stub on first submission, and has its Status set on a final
-    resolution (rejected / no_response / offer_declined / hired)
+  - once an application is submitted, the submitted CV and cover letter are
+    copied (never moved) into documents/applications/<stem>/ as cv_draft.tex
+    and cover_letter.tex, unless an archived copy is already there
+  - `outcome.md` there gets a dated note, is created as an in_progress stub on
+    first submission, ticks "Offer received" on an offer, and has its Status set
+    on a final resolution (rejected / no_response / offer_declined / hired).
+    The format has no withdrawn status, so a withdrawal is noted and Status is
+    left as it was
+  - every write names the row version the page showed (`rev`); a row that
+    another command changed since the page loaded is refused, not overwritten
+Fetching a posting that was never archived stays /outcome's job.
+
+"Find & rank" starts tools/scheduled_run.ps1 -DryRun, the same unattended run
+Task Scheduler starts each weekday, in scrape-and-rank-only mode: the same tool
+allowlist, lock file and spending cap. /api/run reports whether a run is going,
+what the last one cost, and the newest digest (served at /digest/<name>).
 
 Markdown files in an application folder open rendered at /view/<stem>/<file>
 (saved postings are third-party text, so they render without links), and the
@@ -39,16 +54,20 @@ headers, and requires a per-run token on writes.
 
 import argparse
 import csv
+import hashlib
 import io
 import json
 import os
 import re
 import secrets
+import shutil
+import subprocess
 import sys
 import tempfile
 import threading
+import time
 import webbrowser
-from datetime import date
+from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -67,11 +86,22 @@ STATUSES = {"drafted", "on_hold", "applied", "interview", "offer", "hired",
 LEGACY = {"no response": "no_response", "offer declined": "offer_declined"}
 ARCHIVE_FINAL = {"rejected", "no_response", "offer_declined", "hired"}
 NOT_SUBMITTED = {"drafted", "on_hold"}
+OFFER_STAGE = {"offer", "hired", "offer_declined"}
+DIGEST_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(-\d{4})?\.md$")
+RUN_LOCK_HOURS = 3  # tools/scheduled_run.ps1 treats a lock older than this as stale
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 STEM_RE = re.compile(r"^[a-z0-9_]+$")
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9.&'-]*$")
 RESEARCH_TTL_DAYS = 30
 LOCK = threading.Lock()
+
+
+class StaleRow(ValueError):
+    """The row changed on disk after the page loaded it."""
+
+
+def row_rev(row):
+    return hashlib.sha1("\x1f".join(row).encode("utf-8")).hexdigest()[:12]
 
 
 def read_rows(csv_path):
@@ -104,6 +134,7 @@ def as_record(idx, header, row):
     rec = dict(zip(HEADER, padded))
     rec["status"] = LEGACY.get(rec["status"], rec["status"])
     rec["idx"] = idx
+    rec["rev"] = row_rev(row)
     stem = stem_of(row)
     rec["stem"] = stem
     folder = ROOT / "documents" / "applications" / stem if stem else None
@@ -153,18 +184,24 @@ def skip_list():
     return out
 
 
-def shortlist(tracked):
+def shortlist(tracked, st=None):
     """Ranked jobs with no tracker row. Company names differ between the scraper and the
     tracker ("PlayerZero, Inc." vs "PlayerZero"), so matching is by normalized company
     prefix plus title overlap; another role at a tracked company stays visible, flagged.
-    `excluded` marks a job the ranking ruled out; `skipped` carries the reason when the
-    company is on the skip list. The board hides both unless asked."""
+    `excluded` marks a job the ranking ruled out, `skipped` carries the reason when the
+    company is on the skip list, and `dismissed` the reason the user gave on the board.
+    The board hides all three unless asked. `queued` marks a job the user asked the next
+    unattended run to draft. /rank's strengths, gaps and gate verdicts ride along as
+    stored, for the details panel: they are untrusted text, rendered as plain text."""
     path = ROOT / "job_scraper" / "seen_jobs.json"
     if not path.exists():
         return []
     seen = json.loads(path.read_text(encoding="utf-8")).get("seen", {})
     tracked = [(norm_company(c), title_words(r)) for c, r in tracked]
     skips = skip_list()
+    st = st or bs.load(ROOT)
+    queued = {q["key"] for q in st["queue"]}
+    dismissed = {d["key"]: d.get("why") or "not interested" for d in st["dismissed_jobs"]}
     out = []
     for key, v in seen.items():
         if v.get("status") != "ranked":
@@ -185,9 +222,16 @@ def shortlist(tracked):
         location = v.get("location") if v.get("location") not in ("PASS", "FAIL", "FLAG") else ""
         out.append({"key": key, "title": v.get("title", ""), "company": v.get("company", ""),
                     "location": location or "", "url": v.get("url", ""),
-                    "score": v.get("rank_score"), "deadline": v.get("deadline"),
-                    "excluded": excluded, "skipped": skipped, "other_role": bool(same_co)})
-    out.sort(key=lambda j: (bool(j["excluded"] or j["skipped"]), -(j["score"] or 0)))
+                    "score": v.get("rank_score"), "verdict": v.get("rank_verdict"), "rank_date": v.get("rank_date"),
+                    "deadline": v.get("deadline"), "posted_date": v.get("posted_date"), "portal": v.get("portal"),
+                    "strengths": [str(s) for s in v.get("strengths") or []][:3],
+                    "gaps": [str(g) for g in v.get("gaps") or []][:3],
+                    "location_verdict": v.get("location_verdict", v.get("location") if not location else None),
+                    "language_gate": v.get("language_gate"), "language_note": v.get("language_note"),
+                    "guard": v.get("guard"),
+                    "excluded": excluded, "skipped": skipped, "dismissed": dismissed.get(key),
+                    "queued": key in queued, "other_role": bool(same_co)})
+    out.sort(key=lambda j: (bool(j["excluded"] or j["skipped"] or j["dismissed"]), not j["queued"], -(j["score"] or 0)))
     return out
 
 
@@ -201,11 +245,13 @@ def board(csv_path):
     st = bs.load(ROOT)
     today = date.today()
     return {"today": today.isoformat(), "rows": recs,
-            "shortlist": shortlist((r["company"], r["role"]) for r in recs),
+            "shortlist": shortlist(((r["company"], r["role"]) for r in recs), st),
             "due": bs.due(recs, st, today),
             "interviews": st["interviews"],
             "reminders": [r for r in st["reminders"] if not r.get("done")],
-            "goal": bs.stats(recs, st, ROOT, today)["goal"]}
+            "goal": bs.stats(recs, st, ROOT, today)["goal"],
+            "resolved": sum(1 for r in recs if r["status"] in ARCHIVE_FINAL),
+            "run": run_status()}
 
 
 PAGE = """<!doctype html>
@@ -295,40 +341,65 @@ def view_research(slug):
     return page(f"{data.get('company', slug)} research", f"company_research / {slug}.json", "\n".join(out))
 
 
-def update_outcome(stem, company, role, status, when):
+def archive_submitted(row, stem):
+    """/outcome Step 3.1: copy (never move) the submitted CV and cover letter into the
+    application folder. An archived copy is what was actually sent, so it is never
+    replaced; /outcome followup and /interview draw every claim from it."""
     folder = ROOT / "documents" / "applications" / stem
-    if not folder.is_dir():
-        return
+    copied = []
+    for col, home, fallback, name in ((10, "cv", f"cv/main_{stem}.tex", "cv_draft.tex"),
+                                      (11, "cover_letters", f"cover_letters/cover_{stem}.tex", "cover_letter.tex")):
+        target = folder / name
+        src = (ROOT / (row[col] if len(row) > col and row[col] else fallback)).resolve()
+        if target.exists() or not src.is_file() or (ROOT / home).resolve() not in src.parents:
+            continue
+        folder.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, target)
+        copied.append(name)
+    return copied
+
+
+def update_outcome(stem, company, role, status, when, archived=()):
+    folder = ROOT / "documents" / "applications" / stem
     path = folder / "outcome.md"
-    note = f"- {when}: Status set to {status} on the tracker board."
-    if not path.exists():
-        if status in NOT_SUBMITTED or status == "withdrawn":
-            return
-        path.write_text(f"# Outcome: {company} — {role}\n\n**Status:** in_progress\n\n"
-                        "## Interview stages reached\n- [ ] Phone screen\n- [ ] Technical interview\n"
-                        "- [ ] Case interview\n- [ ] Final round\n- [ ] Offer received\n\n"
-                        f"## Notes\n{note}\n", encoding="utf-8")
+    if not folder.is_dir() or (not path.exists() and (status in NOT_SUBMITTED or status == "withdrawn")):
+        return
+    if status == "withdrawn":
+        note = f"- {when}: Withdrawn by the candidate (tracker board)."
     else:
+        note = f"- {when}: Status set to {status} on the tracker board."
+    if archived:
+        note += f" Archived the submitted {' and '.join(archived)}."
+    if path.exists():
         text = path.read_text(encoding="utf-8").rstrip("\n") + "\n" + note + "\n"
-        path.write_text(text, encoding="utf-8")
-    text = path.read_text(encoding="utf-8")
-    text = re.sub(r"\n\n\*\*Date resolved:\*\*[^\n]*", "", text)
-    final = status if status in ARCHIVE_FINAL else "in_progress"
-    text = re.sub(r"\*\*Status:\*\*[^\n]*", f"**Status:** {final}", text, count=1)
-    if final != "in_progress":
-        text = text.replace(f"**Status:** {final}\n", f"**Status:** {final}\n\n**Date resolved:** {when}\n", 1)
+    else:
+        text = (f"# Outcome: {company} — {role}\n\n**Status:** in_progress\n\n"
+                "## Interview stages reached\n- [ ] Phone screen\n- [ ] Technical interview\n"
+                "- [ ] Case interview\n- [ ] Final round\n- [ ] Offer received\n\n"
+                f"## Notes\n{note}\n")
+    if status in OFFER_STAGE:
+        text = text.replace("- [ ] Offer received", f"- [x] Offer received ({when})", 1)
+    if status != "withdrawn":  # the format has no withdrawn status: leave Status as it was
+        text = re.sub(r"\n\n\*\*Date resolved:\*\*[^\n]*", "", text)
+        final = status if status in ARCHIVE_FINAL else "in_progress"
+        text = re.sub(r"\*\*Status:\*\*[^\n]*", f"**Status:** {final}", text, count=1)
+        if final != "in_progress":
+            text = text.replace(f"**Status:** {final}\n", f"**Status:** {final}\n\n**Date resolved:** {when}\n", 1)
     path.write_text(text, encoding="utf-8")
 
 
 def find_row(rows, payload):
     idx = payload.get("idx")
     key = (payload.get("company"), payload.get("role"))
-    if isinstance(idx, int) and 0 <= idx < len(rows) and (rows[idx][1], rows[idx][3]) == key:
-        return idx
-    matches = [i for i, r in enumerate(rows) if (r[1], r[3]) == key]
-    if len(matches) != 1:
-        raise ValueError("row not found; reload the board")
-    return matches[0]
+    if not (isinstance(idx, int) and 0 <= idx < len(rows) and (rows[idx][1], rows[idx][3]) == key):
+        matches = [i for i, r in enumerate(rows) if (r[1], r[3]) == key]
+        if len(matches) != 1:
+            raise ValueError("row not found; reload the board")
+        idx = matches[0]
+    if payload.get("rev") and payload["rev"] != row_rev(rows[idx]):
+        raise StaleRow(f"{key[0]} changed on disk since the board loaded (another command updated it). "
+                       "The board has reloaded; check the card and try again.")
+    return idx
 
 
 def edit_row(csv_path, payload, change):
@@ -370,12 +441,12 @@ def set_contact(csv_path, payload):
 
 
 def log_interview(csv_path, payload):
+    header, rows = read_rows(csv_path)
+    row = rows[find_row(rows, payload)]  # a stale row is refused before anything is saved
     with bs.LOCK:
         st = bs.load(ROOT)
         _, label, day = bs.add_interview(st, payload)
         bs.save(ROOT, st)
-    header, rows = read_rows(csv_path)
-    row = rows[find_row(rows, payload)]
     if LEGACY.get(row[6], row[6]) in ("drafted", "on_hold", "applied"):
         move(csv_path, {**payload, "status": "interview", "date": min(day, date.today()).isoformat()})
     stem = stem_of(row)
@@ -431,7 +502,108 @@ def move(csv_path, payload):
         write_rows(csv_path, header, rows)
         stem = stem_of(row)
     if stem:
-        update_outcome(stem, row[1], row[3], status, when)
+        sent = status not in NOT_SUBMITTED and not (status == "withdrawn" and old in NOT_SUBMITTED)
+        archived = archive_submitted(row, stem) if sent else []
+        update_outcome(stem, row[1], row[3], status, when, archived)
+
+
+def rank_action(payload):
+    """Queue, unqueue, dismiss or restore a ranked job; a dismissal can also rule out the company."""
+    key, action = payload.get("key"), payload.get("action")
+    path = ROOT / "job_scraper" / "seen_jobs.json"
+    job = (json.loads(path.read_text(encoding="utf-8")).get("seen", {}) if path.exists() else {}).get(key)
+    if not isinstance(job, dict) or job.get("status") != "ranked":
+        raise ValueError("not a ranked job; reload the board")
+    with bs.LOCK:
+        st = bs.load(ROOT)
+        bs.set_ranked(st, action, key, payload.get("why", ""))
+        bs.save(ROOT, st)
+    if action == "dismiss" and payload.get("rule_out_company"):
+        rule_out_company(str(job.get("company", "")), payload.get("why", ""))
+
+
+def rule_out_company(company, why):
+    """Add the company to documents/cv/daily_run.json's skip list, which the unattended run
+    (tools/daily_select.py) and this board both read. An existing entry is left as it is."""
+    if not norm_company(company):
+        raise ValueError("company name missing")
+    path = ROOT / "documents" / "cv" / "daily_run.json"
+    cfg = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    skips = cfg.setdefault("skip_companies", [])
+    names = [s if isinstance(s, str) else s.get("name", "") for s in skips if isinstance(s, (str, dict))]
+    if any(same_company(norm_company(company), norm_company(n)) for n in names):
+        return
+    skips.append({"name": company.strip(), "why": bs.clean(why, 160) or f"ruled out on the tracker board {date.today()}"})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+        f.write(json.dumps(cfg, indent=1, ensure_ascii=False))
+    os.replace(tmp, path)
+
+
+LAST_START = {"t": 0.0}
+
+
+def run_status():
+    """The unattended run as the board sees it: tools/scheduled_run.ps1's lock file, the newest
+    run summary (reports/daily/run-*.json, claude --output-format json) and the newest digest."""
+    daily = ROOT / "reports" / "daily"
+    out = {"available": sys.platform == "win32" and (ROOT / "tools" / "scheduled_run.ps1").is_file(),
+           "running": False, "started": None, "last": None, "digest": None}
+    lock = daily / ".lock"
+    if lock.is_file() and time.time() - lock.stat().st_mtime < RUN_LOCK_HOURS * 3600:
+        out["running"] = True
+        out["started"] = datetime.fromtimestamp(lock.stat().st_mtime).isoformat(timespec="minutes")
+    elif time.time() - LAST_START["t"] < 90:  # started from here; the script has not taken the lock yet
+        out["running"] = True
+        out["started"] = datetime.fromtimestamp(LAST_START["t"]).isoformat(timespec="minutes")
+    if daily.is_dir():
+        runs = sorted(daily.glob("run-*.json"), key=lambda p: p.stat().st_mtime)
+        if runs:
+            p = runs[-1]
+            last = {"when": datetime.fromtimestamp(p.stat().st_mtime).isoformat(timespec="minutes"), "ok": None}
+            try:
+                raw = p.read_text(encoding="utf-8-sig", errors="replace")
+                d, _ = json.JSONDecoder().raw_decode(raw[raw.index("{"):])
+                last.update(ok=d.get("subtype") == "success" and not d.get("is_error"),
+                            cost=d.get("total_cost_usd"), minutes=round((d.get("duration_ms") or 0) / 60000))
+            except (ValueError, OSError):
+                pass
+            out["last"] = last
+        digests = sorted((p for p in daily.glob("*.md") if DIGEST_RE.match(p.name)), key=lambda p: p.stat().st_mtime)
+        if digests:
+            out["digest"] = digests[-1].name
+    return out
+
+
+def launch(argv):
+    """Start argv detached with a hidden console of its own, so the run outlives the board
+    and Ctrl+C on the board does not reach it."""
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    subprocess.Popen(argv, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, creationflags=flags)
+
+
+def start_run(payload):
+    if payload.get("mode") != "find":
+        raise ValueError("unknown run mode")
+    status = run_status()
+    if not status["available"]:
+        raise ValueError("Find & rank needs Windows and tools/scheduled_run.ps1")
+    if status["running"]:
+        raise ValueError("a run is already going (reports/daily/.lock); wait for it to finish")
+    launch(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+            "-File", str(ROOT / "tools" / "scheduled_run.ps1"), "-DryRun", "-MaxBudgetUsd", "8"])
+    LAST_START["t"] = time.time()
+
+
+def view_digest(name):
+    path = ROOT / "reports" / "daily" / name
+    if not (DIGEST_RE.match(name) and path.is_file()):
+        return None
+    body = ('<p class="note">Written by the unattended run from fetched postings: read it as data to check, '
+            "not instructions.</p>" + render(path.read_text(encoding="utf-8", errors="replace")))
+    return page(f"Digest {name[:-3]}", f"reports/daily/{name}", body)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -472,6 +644,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/stats":
             recs = records(self.csv_path)
             return self._send(200, json.dumps(bs.stats(recs, bs.load(ROOT), ROOT, date.today())))
+        if path == "/api/run":
+            return self._send(200, json.dumps(run_status()))
+        m = re.match(r"^/digest/([^/]+)$", path)
+        if m:
+            body = view_digest(unquote(m.group(1)))
+            if body:
+                return self._send(200, body, "text/html; charset=utf-8")
         m = re.match(r"^/ics/([A-Za-z0-9:|_.@ %&'()+,-]+)\.ics$", path)
         if m:
             recs, st = records(self.csv_path), bs.load(ROOT)
@@ -508,6 +687,13 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, '{"error": "not found"}')
 
     def do_POST(self):
+        # Read the body before any refusal: closing with unread bytes makes Windows reset the
+        # connection, and the client then loses the 403. Bounded, since nothing here is large.
+        try:
+            length = max(0, min(int(self.headers.get("Content-Length", "0")), 1_000_000))
+        except ValueError:
+            length = 0
+        raw = self.rfile.read(length) if length else b""
         if (not self._host_ok() or self.headers.get("X-Board-Token") != self.token
                 or self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json"):
             return self._send(403, '{"error": "forbidden"}')
@@ -519,14 +705,17 @@ class Handler(BaseHTTPRequestHandler):
                                          else log_interview(self.csv_path, p)),
             "/api/reminder": lambda p: change_state(p, "reminder"),
             "/api/goal": lambda p: change_state(p, "goal"),
+            "/api/ranked": rank_action,
+            "/api/run": start_run,
         }
         handler = routes.get(urlparse(self.path).path)
         if handler is None:
             return self._send(404, '{"error": "not found"}')
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            handler(json.loads(self.rfile.read(length) or b"{}"))
+            handler(json.loads(raw or b"{}"))
             return self._send(200, json.dumps(board(self.csv_path)))
+        except StaleRow as exc:
+            return self._send(409, json.dumps({"error": str(exc), "stale": True}))
         except Exception as exc:
             return self._send(400, json.dumps({"error": str(exc)}))
 

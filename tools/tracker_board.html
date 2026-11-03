@@ -46,6 +46,15 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .card.ro { cursor: default; }
 .card.ro:hover { border-color: var(--line); }
 .ruledbtn { width: 100%; margin-top: 2px; font-size: 12.5px; color: var(--muted); background: transparent; border-style: dashed; }
+.tag.q { background: var(--drop); color: var(--accent); }
+.mini { font-size: 11.5px; padding: 1px 7px; }
+.cmd { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+.cmd code { flex: 1; background: var(--chip); border-radius: 6px; padding: 5px 8px; font: 12.5px/1.4 Consolas, ui-monospace, monospace; overflow-wrap: anywhere; }
+.plain { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
+.plain li { margin: 3px 0; }
+.note { font-size: 12.5px; color: var(--muted); margin: 6px 0 0; }
+#runChip { font-size: 12.5px; color: var(--muted); }
+#runChip a { color: var(--accent); }
 .card.dragging { opacity: .45; }
 .co { font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
 .fit { font-size: 11.5px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -104,6 +113,8 @@ dialog .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 1
     <button id="dueBtn" title="Reminders due">Reminders<span class="badge zero" id="dueBadge">0</span></button>
     <button id="goalBtn" title="Set a weekly goal"></button>
     <a class="btn" href="/stats" target="_blank">Stats</a>
+    <button id="runBtn" title="Scrape and rank new postings now (the weekday run in scrape-and-rank-only mode)">Find &amp; rank</button>
+    <span id="runChip"></span>
     <select id="sort" aria-label="Sort cards"><option value="deadline">Sort: deadline</option><option value="fit">Sort: fit</option><option value="updated">Sort: last update</option></select>
     <input type="search" id="q" placeholder="Filter (press /)" aria-label="Filter">
     <button id="notifBtn" title="Browser notifications for due reminders">Notify</button>
@@ -130,7 +141,7 @@ dialog .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 1
 <script>
 const TOKEN = "__BOARD_TOKEN__";
 const COLUMNS = [
-  { id: "shortlist", title: "Ranked, not started", sub: "From /rank. Start one with /apply.", readOnly: true },
+  { id: "shortlist", title: "Ranked, not started", sub: "From /rank. Click one for why it ranked; queue it or copy /apply.", readOnly: true },
   { id: "todo", title: "To submit", sub: "Documents ready, not sent", statuses: ["drafted"] },
   { id: "hold", title: "On hold", sub: "Paused on purpose", statuses: ["on_hold"] },
   { id: "applied", title: "Applied", sub: "Submitted, waiting", statuses: ["applied"] },
@@ -145,7 +156,7 @@ const STAGES = { phone_screen: "Phone screen", technical: "Technical interview",
 const FILES = [[/^form_pack\.md$/, "Form pack"], [/_Resume_.*\.pdf$/, "Resume"], [/_Cover_Letter_.*\.pdf$/, "Letter"],
   [/^referral_dms\.md$/, "Referral DMs"], [/^job_posting\.md$/, "Saved posting"], [/^outcome\.md$/, "Outcome"]];
 const CARD_FILES = new Set(["Form pack"]);
-let data = null, dragIdx = null, openKey = null;
+let data = null, dragIdx = null, openKey = null, openRankKey = null, wasRunning = false;
 
 const $ = (sel) => document.querySelector(sel);
 const store = { get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -175,10 +186,32 @@ async function load() {
 async function post(path, body, okMsg) {
   const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-Board-Token": TOKEN }, body: JSON.stringify(body) });
   const out = await res.json();
+  if (res.status === 409) { toast(out.error); await load(); return false; }
   if (!res.ok || out.error) { toast("Not saved: " + (out.error || res.status)); return false; }
   data = out; render(); if (okMsg) toast(okMsg); return true;
 }
-const rowRef = (r) => ({ idx: r.idx, company: r.company, role: r.role, stem: r.stem });
+// rev: the row version this page showed; the server refuses a write if another command changed the row since.
+const rowRef = (r) => ({ idx: r.idx, company: r.company, role: r.role, stem: r.stem, rev: r.rev });
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast("Copied: paste it into Claude Code"); }
+  catch { toast("Copy failed; select the command and copy it"); }
+}
+function cmdBox(cmd) {
+  const box = el("div", "cmd"); box.append(el("code", null, cmd), btn("Copy", () => copyText(cmd), "mini")); return box;
+}
+// The command that owns this application's next step. The board records moves; drafting notes,
+// prep and calibration stay with the commands.
+function nextStep(r) {
+  const due = remindersFor(r).filter(i => (i.bucket === "overdue" || i.bucket === "today") && i.kind === "followup");
+  if (r.status === "applied" && due.length) return [`/outcome followup ${r.company}`, "Quiet for 10+ days: drafts a short follow-up from what you sent."];
+  if (r.status === "applied") return [`/outcome ${r.company}`, "Record a reply, a rejection or an interview invite."];
+  if (r.status === "interview") return [`/interview ${r.company} ${r.role}`, "Stage-specific prep pack and an optional mock interview."];
+  if (r.status === "offer") return [`/outcome ${r.company}`, "Record the offer decision."];
+  if (["drafted", "on_hold"].includes(r.status)) return [null, "Submit it with the form pack, then move the card to Applied."];
+  if (data.resolved >= 3) return ["/setup", `${data.resolved} applications are resolved: /setup Path A calibrates fit scoring from them.`];
+  return [null, "Closed."];
+}
 
 function deadlineTag(dl) {
   if (!dl || !/^\d{4}-\d{2}-\d{2}$/.test(dl)) return null;
@@ -201,6 +234,8 @@ function fileLinks(r, only) {
   if (r.research) add("Research", `/research/${encodeURIComponent(r.research)}`);
   if (r.stem) for (const f of r.files.filter(n => /^interview_prep_.+\.md$/.test(n)))
     add("Prep: " + f.slice(15, -3).replace(/_/g, " "), `/view/${r.stem}/${encodeURIComponent(f)}`);
+  if (r.stem && !only) for (const f of r.files.filter(n => /^followup_\d{4}-\d{2}-\d{2}\.md$/.test(n)))
+    add("Follow-up " + f.slice(9, -3), `/view/${r.stem}/${encodeURIComponent(f)}`);
   return out;
 }
 
@@ -234,20 +269,72 @@ function rowCard(r) {
 }
 
 function shortCard(j) {
-  const c = el("article", "card ro");
+  const c = el("article", "card"); c.tabIndex = 0;
   const co = el("div", "co"); co.append(el("span", null, j.company));
   if (j.score != null) co.append(el("span", "fit", "score " + j.score));
   c.append(co, el("div", "role", j.title));
   const meta = el("div", "meta");
+  if (j.queued) meta.append(el("span", "tag q", "Queued for next run"));
   if (j.excluded) { c.style.opacity = ".6"; meta.append(el("span", "tag hot", j.excluded)); }
   else if (j.skipped) { c.style.opacity = ".6"; meta.append(el("span", "tag hot", "Ruled out: " + j.skipped)); }
+  else if (j.dismissed) { c.style.opacity = ".6"; meta.append(el("span", "tag hot", "Not interested: " + j.dismissed)); }
   if (j.other_role) meta.append(el("span", "tag warn", "You track another role here"));
   if (j.location) meta.append(el("span", "tag", j.location));
   const t = deadlineTag(j.deadline); if (t) meta.append(t);
   c.append(meta);
+  const links = el("div", "links");
   const live = safeUrl(j.url);
-  if (live) { const links = el("div", "links"); const a = el("a", null, "Posting"); a.href = live; a.target = "_blank"; a.rel = "noopener noreferrer"; links.append(a); c.append(links); }
+  if (live) { const a = el("a", null, "Posting"); a.href = live; a.target = "_blank"; a.rel = "noopener noreferrer"; links.append(a); }
+  if (live) links.append(btn("Copy /apply", () => copyText(`/apply ${live}`), "mini"));
+  c.append(links);
+  c.addEventListener("click", e => { if (!e.target.closest("a, button")) openRanked(j); });
+  c.addEventListener("keydown", e => { if (e.key === "Enter") openRanked(j); });
   return c;
+}
+
+// Why /rank scored it, and what to do with it. /rank's strengths and gaps are untrusted text: textContent only.
+function openRanked(j, keepScroll) {
+  openKey = null; openRankKey = j.key;
+  const d = $("#detail"), scroll = d.scrollTop; d.replaceChildren(); d.classList.add("open");
+  d.append(btn("×", closeDrawers, "x"), el("h3", null, j.company), el("div", "role", j.title));
+  const kv = el("div", "kv");
+  const gate = (v, note) => (v || "-") + (note ? ` (${note})` : "");
+  for (const [k, v] of [["Score", j.score != null ? `${j.score}${j.verdict ? " · " + j.verdict : ""}` : "-"], ["Ranked", j.rank_date || "-"],
+                        ["Deadline", j.deadline || "none stated"], ["Posted", j.posted_date || "-"], ["Location", j.location || "-"],
+                        ["Location gate", gate(j.location_verdict)], ["Language gate", gate(j.language_gate, j.language_note)],
+                        ["Posting check", j.guard || "-"], ["Source", j.portal || "-"]])
+    kv.append(el("span", null, k), el("span", null, v));
+  d.append(kv);
+  const live = safeUrl(j.url);
+  if (live) { const links = el("div", "links"); links.style.marginTop = "10px"; const a = el("a", null, "Open the posting"); a.href = live; a.target = "_blank"; a.rel = "noopener noreferrer"; links.append(a); d.append(links); }
+  for (const [title, items] of [["Why it ranked", j.strengths], ["Gaps", j.gaps]]) {
+    d.append(el("h4", null, title));
+    const ul = el("ul", "plain"); for (const s of items || []) ul.append(el("li", null, s));
+    if (!(items || []).length) ul.append(el("li", null, "Not recorded."));
+    d.append(ul);
+  }
+  d.append(el("p", "note", "Triage from the posting text only. /apply re-evaluates with company research before anything is drafted."));
+  d.append(el("h4", null, "Start it now"));
+  if (live) d.append(cmdBox(`/apply ${live}`)); else d.append(el("div", "when", "No posting URL stored."));
+  if (data.run && data.run.available) {  // the queue means nothing without the weekday runner (tools/scheduled_run.ps1)
+    d.append(el("h4", null, "Next weekday run"));
+    const qf = el("div", "form");
+    if (j.queued) qf.append(el("span", "tag q", "Queued"), btn("Remove from queue", () => post("/api/ranked", { action: "unqueue", key: j.key }, "Removed from the queue")));
+    else qf.append(btn("Queue for next run", () => post("/api/ranked", { action: "queue", key: j.key }, "Queued: the next weekday run drafts it first")));
+    d.append(qf, el("p", "note", "The 06:47 weekday run drafts queued jobs first, even below 75 or with a senior title. The sponsorship, eligibility and posting checks still apply, and it never submits."));
+  }
+  d.append(el("h4", null, "Not interested"));
+  if (j.dismissed) {
+    const rf = el("div", "form"); rf.append(el("span", null, "Hidden: " + j.dismissed), btn("Show it again", () => post("/api/ranked", { action: "restore", key: j.key }, "Back on the list")));
+    d.append(rf);
+  } else {
+    const nf = el("div", "form"); const why = el("input"); why.type = "text"; why.placeholder = "Why (optional)";
+    const lab = el("label"); const cb = el("input"); cb.type = "checkbox"; lab.append(cb, ` Rule out ${j.company} entirely (adds it to the skip list)`);
+    nf.append(why, btn("Hide it", () => post("/api/ranked", { action: "dismiss", key: j.key, why: why.value, rule_out_company: cb.checked },
+      cb.checked ? `${j.company} ruled out` : "Hidden; the weekday run will skip it")));
+    d.append(nf, lab);
+  }
+  if (keepScroll) d.scrollTop = scroll;
 }
 
 function sorter() {
@@ -262,7 +349,7 @@ function render() {
   const hit = (s) => !q || s.toLowerCase().includes(q);
   const rows = data.rows.filter(r => hit(r.company + " " + r.role + " " + (r.contact_person || "")));
   const count = (sts) => data.rows.filter(r => sts.includes(r.status)).length;
-  const ruledOut = (j) => Boolean(j.excluded || j.skipped);
+  const ruledOut = (j) => Boolean(j.excluded || j.skipped || j.dismissed);
   const showRuled = store.get("showRuledOut", false);
   const stats = $("#stats"); stats.replaceChildren();
   for (const [label, n] of [["Submitted", count(["applied", "interview", "offer", "hired", "rejected", "no_response", "offer_declined"])],
@@ -288,7 +375,7 @@ function render() {
     const list = el("div", "cards");
     if (!items.length) list.append(el("div", "empty", col.readOnly ? "Nothing ranked" : "Drop a card here"));
     for (const it of items) list.append(col.readOnly ? shortCard(it) : rowCard(it));
-    if (ruledN) list.append(btn(showRuled ? "Hide ruled out" : `Show ${ruledN} ruled out`,
+    if (ruledN) list.append(btn(showRuled ? "Hide ruled out" : `Show ${ruledN} ruled out or hidden`,
       () => { store.set("showRuledOut", !showRuled); render(); }, "ruledbtn"));
     sec.append(list);
     if (!col.readOnly) {
@@ -299,7 +386,9 @@ function render() {
     board.append(sec);
   }
   if (openKey) { const r = data.rows.find(x => keyOf(x) === openKey); if (r) openDetail(r, true); }
+  else if (openRankKey) { const j = data.shortlist.find(x => x.key === openRankKey); if (j) openRanked(j, true); else closeDrawers(); }
   if ($("#due").classList.contains("open")) renderDue();
+  showRun(data.run);
   notifyDue();
 }
 
@@ -328,7 +417,7 @@ function timeline(r) {
 }
 
 function openDetail(r, keepScroll) {
-  openKey = keyOf(r);
+  openKey = keyOf(r); openRankKey = null;
   const d = $("#detail"), scroll = d.scrollTop; d.replaceChildren(); d.classList.add("open");
   d.append(btn("×", closeDrawers, "x"), el("h3", null, r.company), el("div", "role", r.role));
   const kv = el("div", "kv");
@@ -337,6 +426,11 @@ function openDetail(r, keepScroll) {
   for (const [k, v] of pairs) kv.append(el("span", null, k), el("span", null, v));
   d.append(kv);
   const links = el("div", "links"); links.style.marginTop = "10px"; links.append(...fileLinks(r)); d.append(links);
+
+  const [cmd, hint] = nextStep(r);
+  d.append(el("h4", null, "Next step"));
+  if (cmd) d.append(cmdBox(cmd));
+  d.append(el("p", "note", hint));
 
   d.append(el("h4", null, "Contact"));
   const cf = el("div", "form"); const ci = el("input"); ci.type = "text"; ci.placeholder = "Recruiter or referrer"; ci.value = r.contact_person || "";
@@ -405,7 +499,33 @@ function renderDue() {
   }
   if (!any) d.append(el("p", "when", "Nothing due. Follow-up nudges appear 10 days after you apply or last follow up."));
 }
-function closeDrawers() { $("#detail").classList.remove("open"); $("#due").classList.remove("open"); openKey = null; }
+function closeDrawers() { $("#detail").classList.remove("open"); $("#due").classList.remove("open"); openKey = null; openRankKey = null; }
+
+// ---------------- find & rank (the weekday run in scrape-and-rank-only mode)
+function showRun(run) {
+  if (!run) return;
+  const b = $("#runBtn"), chip = $("#runChip"); chip.replaceChildren();
+  b.hidden = !run.available;
+  b.disabled = run.running;
+  b.textContent = run.running ? "Finding…" : "Find & rank";
+  if (run.running) chip.append(`Run in progress since ${(run.started || "").slice(11)}`);
+  else if (run.last) {
+    const when = run.last.when.replace("T", " ").slice(5);
+    chip.append(`Last run ${when}` + (run.last.cost != null ? ` · $${run.last.cost.toFixed(2)}` : "") + (run.last.ok === false ? " · ended with an error" : ""));
+  }
+  if (run.digest) { chip.append(" · "); const a = el("a", null, "Digest"); a.href = "/digest/" + encodeURIComponent(run.digest); a.target = "_blank"; chip.append(a); }
+  if (wasRunning && !run.running) { toast("Find & rank finished: new postings are in Ranked"); load(); }
+  wasRunning = run.running;
+}
+async function pollRun() {
+  if (!wasRunning) return;
+  try { const res = await fetch("/api/run", { cache: "no-store" }); showRun(await res.json()); } catch {}
+}
+$("#runBtn").addEventListener("click", async () => {
+  if (!confirm("Find & rank now?\n\nRuns the weekday job in scrape-and-rank-only mode: it searches the portals, stores new postings and ranks them. Nothing is drafted or submitted. It takes about 15-20 minutes and costs about $5-6 of Claude usage (capped at $8).")) return;
+  if (await post("/api/run", { mode: "find" }, "Find & rank started; this page updates when it finishes")) wasRunning = true;
+});
+setInterval(pollRun, 20000);
 
 // ---------------- browser notifications
 function notifyDue() {
@@ -463,10 +583,11 @@ document.addEventListener("keydown", e => {
 });
 notifLabel();
 load().then(() => {
-  // Deep links: #due opens the reminders panel, #card=<company> opens that card's details.
+  // Deep links: #due opens the reminders panel, #card=<company> a card's details, #job=<key> a ranked job.
   const h = decodeURIComponent(location.hash.slice(1));
   if (h === "due") renderDue();
   else if (h.startsWith("card=")) { const r = data.rows.find(x => x.company.toLowerCase() === h.slice(5).toLowerCase()); if (r) openDetail(r); }
+  else if (h.startsWith("job=")) { const j = data.shortlist.find(x => x.key === h.slice(4)); if (j) openRanked(j); }
 });
 setInterval(() => load(), 10 * 60 * 1000);
 </script>

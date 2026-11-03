@@ -17,6 +17,11 @@ Reminders come from two places:
 Derived reminders cannot be marked done, only dismissed; logging a follow-up
 or an interview naturally moves or clears them.
 
+Ranked jobs (job_scraper/seen_jobs.json) the user acted on from the board:
+  queue           keys to draft first on the next unattended run (tools/daily_select.py)
+  dismissed_jobs  keys marked "not interested", with the reason; hidden on the
+                  board and never picked
+
 Used by tools/tracker_board.py (board and stats pages), tools/remind.py
 (Windows notifications and the daily digest).
 """
@@ -50,9 +55,26 @@ def load(root):
     st = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     st.setdefault("version", 1)
     st.setdefault("goal", {"weekly_submitted": 0})
-    for key in ("reminders", "interviews", "dismissed"):
+    for key in ("reminders", "interviews", "dismissed", "queue", "dismissed_jobs"):
         st.setdefault(key, [])
     return st
+
+
+def set_ranked(st, action, key, why="", today=None):
+    """Queue, unqueue, dismiss or restore one ranked job by its seen_jobs key."""
+    if not isinstance(key, str) or not key or len(key) > 300:
+        raise ValueError("job key missing")
+    today = (today or date.today()).isoformat()
+    st["queue"] = [q for q in st["queue"] if q["key"] != key]
+    if action in ("dismiss", "restore"):
+        st["dismissed_jobs"] = [d for d in st["dismissed_jobs"] if d["key"] != key]
+    if action == "queue":
+        st["dismissed_jobs"] = [d for d in st["dismissed_jobs"] if d["key"] != key]
+        st["queue"].append({"key": key, "added": today})
+    elif action == "dismiss":
+        st["dismissed_jobs"].append({"key": key, "why": clean(why, 160), "date": today})
+    elif action not in ("unqueue", "restore"):
+        raise ValueError(f"unknown action: {action!r}")
 
 
 def save(root, st):

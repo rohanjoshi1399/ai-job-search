@@ -6,6 +6,7 @@ follow /outcome's 10-day follow-up rule, and that stats count a withdrawal that
 was never submitted as not submitted."""
 import csv
 import json
+import re
 import subprocess
 import sys
 import unittest
@@ -118,6 +119,61 @@ class ShortlistTests(unittest.TestCase):
         self.assertEqual(tb.skip_list(), [])
 
 
+class OutcomeParityTests(unittest.TestCase):
+    """The board is a second writer, so pin its vocabulary to /outcome's own text: if /outcome changes a
+    status name, a stage label or the follow-up rule, this fails instead of the two drifting apart."""
+
+    def setUp(self):
+        self.spec = (REPO / ".claude" / "commands" / "outcome.md").read_text(encoding="utf-8")
+
+    def test_status_vocabulary_matches_outcome(self):
+        line = next(l for l in self.spec.splitlines() if l.startswith("`drafted` |"))
+        canonical = set(re.findall(r"`([a-z_]+)`", line))
+        self.assertEqual(canonical, tb.STATUSES - {"on_hold"})  # on_hold is the board's one local addition
+        self.assertEqual(set(tb.LEGACY), {"no response", "offer declined"})
+        self.assertTrue("Readers must also accept the legacy space spellings `no response` and `offer declined`" in self.spec,
+                        "outcome.md's legacy spellings changed")
+
+    def test_stage_labels_and_followup_rule_match_outcome(self):
+        for label in [v for k, v in bs.STAGES.items() if k != "other"] + ["Offer received"]:
+            self.assertTrue(re.search(rf"^- \[[ x]\] {re.escape(label)}\b", self.spec, re.M), f"outcome.md has no '{label}' stage")
+        self.assertTrue("default threshold of **10 days**" in self.spec, "outcome.md's follow-up threshold changed")
+        self.assertEqual(bs.FOLLOWUP_DAYS, 10)
+        self.assertTrue("fewer than **two** logged follow-ups" in self.spec, "outcome.md's follow-up cap changed")
+
+
+class RunLauncherTests(unittest.TestCase):
+    def setUp(self):
+        tmp = TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.addCleanup(setattr, tb, "ROOT", tb.ROOT)
+        self.addCleanup(setattr, tb, "launch", tb.launch)
+        tb.ROOT = Path(tmp.name)
+        (tb.ROOT / "tools").mkdir()
+        (tb.ROOT / "tools" / "scheduled_run.ps1").write_text("# stub", encoding="utf-8")
+        tb.LAST_START["t"] = 0.0
+        self.calls = []
+        tb.launch = self.calls.append
+
+    @unittest.skipUnless(sys.platform == "win32", "the run button is Windows-only")
+    def test_find_starts_the_dry_run_once(self):
+        tb.start_run({"mode": "find"})
+        self.assertEqual(len(self.calls), 1)
+        argv = self.calls[0]
+        self.assertEqual(argv[0], "powershell")
+        self.assertIn("-DryRun", argv)
+        self.assertEqual(argv[argv.index("-MaxBudgetUsd") + 1], "8")
+        self.assertTrue(argv[argv.index("-File") + 1].endswith("scheduled_run.ps1"))
+        with self.assertRaisesRegex(ValueError, "already going"):
+            tb.start_run({"mode": "find"})  # started seconds ago; the script has not taken the lock yet
+        self.assertEqual(len(self.calls), 1)
+
+    def test_unknown_mode_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "unknown run mode"):
+            tb.start_run({"mode": "full"})
+        self.assertEqual(self.calls, [])
+
+
 class FeatureServerTests(BoardServerTests):
     def outcome(self):
         return (self.root / "documents" / "applications" / "acme_ml_engineer" / "outcome.md")
@@ -165,8 +221,98 @@ class FeatureServerTests(BoardServerTests):
         self.assertEqual(json.loads(self.post("/api/goal", {"weekly_submitted": 4})[1])["goal"]["weekly_submitted"], 4)
         self.assertEqual(self.post("/api/goal", {"weekly_submitted": 500})[0], 400)
 
+    def app_dir(self):
+        return self.root / "documents" / "applications" / "acme_ml_engineer"
+
+    def test_submitting_archives_the_sent_cv_and_letter_once(self):
+        (self.root / "cv").mkdir()
+        (self.root / "cover_letters").mkdir()
+        (self.root / "cv" / "main_acme_ml_engineer.tex").write_text("CV as sent", encoding="utf-8")
+        (self.root / "cover_letters" / "cover_acme_ml_engineer.tex").write_text("Letter as sent", encoding="utf-8")
+        self.assertEqual(self.move("applied")[0], 200)
+        self.assertEqual((self.app_dir() / "cv_draft.tex").read_text(encoding="utf-8"), "CV as sent")
+        self.assertEqual((self.app_dir() / "cover_letter.tex").read_text(encoding="utf-8"), "Letter as sent")
+        self.assertIn("Archived the submitted cv_draft.tex and cover_letter.tex", self.outcome().read_text(encoding="utf-8"))
+        (self.root / "cv" / "main_acme_ml_engineer.tex").write_text("edited after sending", encoding="utf-8")
+        self.move("interview", when="2026-11-05")
+        self.assertEqual((self.app_dir() / "cv_draft.tex").read_text(encoding="utf-8"), "CV as sent")
+
+    def test_withdrawing_an_unsent_draft_archives_nothing(self):
+        (self.root / "cv").mkdir()
+        (self.root / "cv" / "main_acme_ml_engineer.tex").write_text("never sent", encoding="utf-8")
+        self.move("withdrawn")
+        self.assertFalse((self.app_dir() / "cv_draft.tex").exists())
+        self.assertFalse(self.outcome().exists())
+
+    def test_offer_ticks_offer_received_and_withdrawal_keeps_status(self):
+        self.move("applied")
+        self.move("offer", when="2026-11-20")
+        text = self.outcome().read_text(encoding="utf-8")
+        self.assertIn("- [x] Offer received (2026-11-20)", text)
+        self.assertIn("**Status:** in_progress", text)
+        self.move("rejected", when="2026-11-21")
+        self.move("withdrawn", when="2026-11-22")
+        text = self.outcome().read_text(encoding="utf-8")
+        self.assertIn("**Status:** rejected", text)
+        self.assertIn("**Date resolved:** 2026-11-21", text)
+        self.assertIn("- 2026-11-22: Withdrawn by the candidate (tracker board).", text)
+
+    def test_a_row_changed_on_disk_is_not_overwritten(self):
+        rev = json.loads(self.get("/api/board")[1])["rows"][0]["rev"]
+        rows = self.rows()
+        rows[1][9] = "first note; rejected 2026-11-04"  # another command (e.g. /outcome) updated the row
+        rows[1][6] = "rejected"
+        with open(self.csv, "w", encoding="utf-8", newline="") as f:
+            csv.writer(f, lineterminator="\n").writerows(rows)
+        status, body = self.post("/api/move", {**self.ref, "rev": rev, "status": "applied", "date": "2026-11-05"})
+        self.assertEqual(status, 409, body)
+        self.assertTrue(json.loads(body)["stale"])
+        self.assertEqual(self.rows()[1][6], "rejected")
+        fresh = json.loads(self.get("/api/board")[1])["rows"][0]["rev"]
+        self.assertEqual(self.post("/api/move", {**self.ref, "rev": fresh, "status": "applied", "date": "2026-11-05"})[0], 200)
+
+    def test_ranked_actions_queue_hide_and_rule_out(self):
+        (self.root / "job_scraper").mkdir()
+        (self.root / "job_scraper" / "seen_jobs.json").write_text(json.dumps({"seen": {
+            "zeta_ml": {"status": "ranked", "company": "Zeta Labs", "title": "ML Engineer", "rank_score": 70, "url": "https://jobs.test/z",
+                        "strengths": ["RAG <b>match</b>"], "gaps": ["no Go"]},
+            "old_job": {"status": "skipped", "company": "Old", "title": "X", "url": "https://jobs.test/o"}}}), encoding="utf-8")
+        job = json.loads(self.post("/api/ranked", {"action": "queue", "key": "zeta_ml"})[1])["shortlist"][0]
+        self.assertTrue(job["queued"])
+        self.assertEqual(job["strengths"], ["RAG <b>match</b>"])  # stored as data; the page renders it as text
+        self.assertEqual(self.post("/api/ranked", {"action": "queue", "key": "old_job"})[0], 400)
+        job = json.loads(self.post("/api/ranked", {"action": "dismiss", "key": "zeta_ml", "why": "on-call, heavy",
+                                                    "rule_out_company": True})[1])["shortlist"][0]
+        self.assertFalse(job["queued"])
+        self.assertEqual(job["dismissed"], "on-call - heavy")
+        skips = json.loads((self.root / "documents" / "cv" / "daily_run.json").read_text(encoding="utf-8"))["skip_companies"]
+        self.assertEqual(skips, [{"name": "Zeta Labs", "why": "on-call - heavy"}])
+        self.post("/api/ranked", {"action": "dismiss", "key": "zeta_ml", "rule_out_company": True})
+        self.assertEqual(len(json.loads((self.root / "documents" / "cv" / "daily_run.json").read_text(encoding="utf-8"))["skip_companies"]), 1)
+        self.assertIsNone(json.loads(self.post("/api/ranked", {"action": "restore", "key": "zeta_ml"})[1])["shortlist"][0]["dismissed"])
+
+    def test_run_status_digest_and_refusal_without_the_runner(self):
+        daily = self.root / "reports" / "daily"
+        daily.mkdir(parents=True)
+        (daily / "2026-11-03.md").write_text("# Digest\n\n- Ranked 10 [link](https://jobs.test/a) <script>x</script>\n", encoding="utf-8")
+        (daily / "run-2026-11-03-0647.json").write_text('noise\n{"subtype": "success", "is_error": false, "total_cost_usd": 5.5, "duration_ms": 900000}',
+                                                       encoding="utf-8")
+        run = json.loads(self.get("/api/run")[1])
+        self.assertEqual((run["digest"], run["last"]["cost"], run["last"]["minutes"], run["last"]["ok"]), ("2026-11-03.md", 5.5, 15, True))
+        self.assertFalse(run["available"])  # this root has no tools/scheduled_run.ps1
+        status, page = self.get("/digest/2026-11-03.md")
+        self.assertEqual(status, 200)
+        self.assertIn("&lt;script&gt;", page)
+        self.assertNotIn("<script>x", page)
+        self.assertEqual(self.get("/digest/..%2F..%2Fjob_search_tracker.csv")[0], 404)
+        status, body = self.post("/api/run", {"mode": "find"})
+        self.assertEqual(status, 400)
+        self.assertIn("needs Windows and tools/scheduled_run.ps1", body)
+        (daily / ".lock").write_text("123", encoding="utf-8")
+        self.assertTrue(json.loads(self.get("/api/run")[1])["running"])
+
     def test_new_routes_need_token_and_json(self):
-        for path in ("/api/note", "/api/contact", "/api/interview", "/api/reminder", "/api/goal"):
+        for path in ("/api/note", "/api/contact", "/api/interview", "/api/reminder", "/api/goal", "/api/ranked", "/api/run"):
             self.assertEqual(self.post(path, {}, **{"X-Board-Token": "nope"})[0], 403, path)
             self.assertEqual(self.post(path, {}, **{"Content-Type": "text/plain"})[0], 403, path)
 
